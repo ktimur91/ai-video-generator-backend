@@ -7,6 +7,10 @@ const {
 } = require("../services/voice.service");
 const { renderVideo } = require("../services/render.service");
 const { findVideosForSegments } = require("../services/pexels.service");
+const {
+  getRandomPreview,
+  getPreviewDuration,
+} = require("../services/preview.service");
 
 const router = express.Router();
 
@@ -129,9 +133,18 @@ router.post("/generate", async (req, res) => {
       progress
     );
 
-    // Шаг 4: Генерируем общее аудио для intro/outro (опционально)
+    // Шаг 4: Генерируем общее аудио для intro/outro и добавляем заставку
     console.log("Step 4: Processing segments...");
-    // Также генерируем аудио для intro и outro
+
+    // Получаем рандомную заставку
+    const preview = await getRandomPreview();
+    let previewDuration = 3;
+    if (preview) {
+      previewDuration = await getPreviewDuration(preview.filename);
+      console.log(`[Preview] Duration: ${previewDuration.toFixed(1)}s`);
+    }
+
+    // Генерируем аудио для intro и outro
     const introAudio = await generateAudio(
       aiResult.intro || "Привет!",
       `${video.id}_intro`
@@ -141,8 +154,19 @@ router.post("/generate", async (req, res) => {
       `${video.id}_outro`
     );
 
-    // Добавляем intro/outro как отдельные сегменты
+    // Добавляем заставку + intro/outro как отдельные сегменты
     const fullSegments = [
+      // Заставка в начале (без текста, только видео)
+      ...(preview
+        ? [
+            {
+              type: "preview",
+              text: "",
+              previewUrl: preview.url,
+              audioDuration: previewDuration,
+            },
+          ]
+        : []),
       { type: "intro", text: aiResult.intro, audioPath: introAudio },
       ...segments.map((s) => ({ ...s, type: "fact" })),
       { type: "outro", text: aiResult.outro, audioPath: outroAudio },

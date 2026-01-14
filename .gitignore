@@ -1,0 +1,23 @@
+node_modules
+# Keep environment variables out of version control
+.env
+
+/generated/prisma
+
+# Database
+*.db
+*.db-journal
+
+# Storage (keep structure, ignore files)
+storage/audio/*
+!storage/audio/.gitkeep
+storage/videos/*
+!storage/videos/.gitkeep
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db

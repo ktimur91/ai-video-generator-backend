@@ -1,0 +1,29 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum VideoStatus {
+  PENDING
+  GENERATING_ASSETS
+  RENDERING
+  COMPLETED
+  FAILED
+}
+
+model Video {
+  id         String      @id @default(uuid())
+  status     VideoStatus @default(PENDING)
+  title      String
+  scriptText String
+  audioPath  String?
+  videoPath  String?
+  createdAt  DateTime    @default(now())
+}

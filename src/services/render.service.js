@@ -33,7 +33,8 @@ async function renderVideo(video) {
   const escapedProps = props.replace(/'/g, "'\\''");
 
   // Формируем команду для Remotion CLI
-  const command = `cd "${FRONT_RENDER_DIR}" && npx remotion render --props='${escapedProps}' src/index.ts "${outputPath}"`;
+  // Формат: npx remotion render <entry-file> <composition-id> <output-file>
+  const command = `cd "${FRONT_RENDER_DIR}" && npx remotion render src/index.ts MainVideo "${outputPath}" --props='${escapedProps}'`;
 
   console.log("Executing render command:", command);
 

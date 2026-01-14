@@ -1,4 +1,4 @@
-const { EdgeTTS } = require("edge-tts-node");
+const { MsEdgeTTS } = require("edge-tts-node");
 const path = require("path");
 const fs = require("fs").promises;
 
@@ -19,13 +19,12 @@ async function generateAudio(text, videoId) {
   await fs.mkdir(AUDIO_DIR, { recursive: true });
 
   try {
-    const tts = new EdgeTTS();
-
-    await tts.synthesize(text, voice, {
-      outputFormat: "audio-24khz-96kbitrate-mono-mp3",
+    const tts = new MsEdgeTTS({
+      enableLogger: false,
     });
+    await tts.setMetadata(voice, "audio-24khz-96kbitrate-mono-mp3");
 
-    await tts.toFile(outputPath);
+    await tts.toFile(outputPath, text);
 
     console.log(`Audio generated successfully: ${outputPath}`);
 

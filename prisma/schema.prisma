@@ -25,5 +25,6 @@ model Video {
   scriptText String
   audioPath  String?
   videoPath  String?
+  progress   String?     // JSON с прогрессом: {"generateScript":"success","generateAudio":"pending","renderVideo":"waiting"}
   createdAt  DateTime    @default(now())
 }

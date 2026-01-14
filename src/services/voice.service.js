@@ -70,21 +70,24 @@ async function generateAudio(text, videoId) {
 
 /**
  * Получает длительность аудио файла (для синхронизации с видео)
+ * Использует music-metadata вместо ffprobe
  * @param {string} audioPath - Путь к аудио файлу
  * @returns {Promise<number>} - Длительность в секундах
  */
 async function getAudioDuration(audioPath) {
-  const ffmpeg = require("fluent-ffmpeg");
+  const { parseFile } = await import("music-metadata");
 
-  return new Promise((resolve, reject) => {
-    ffmpeg.ffprobe(audioPath, (err, metadata) => {
-      if (err) {
-        reject(new Error(`Failed to get audio duration: ${err.message}`));
-        return;
-      }
-      resolve(metadata.format.duration);
-    });
-  });
+  try {
+    const metadata = await parseFile(audioPath);
+    return metadata.format.duration || 5; // По умолчанию 5 секунд
+  } catch (error) {
+    console.error("Error getting audio duration:", error.message);
+    // Оцениваем длительность по размеру файла (примерно 16KB/сек для mp3 128kbps)
+    const fsSync = require("fs");
+    const stats = fsSync.statSync(audioPath);
+    const estimatedDuration = stats.size / 16000;
+    return Math.max(2, estimatedDuration); // Минимум 2 секунды
+  }
 }
 
 /**

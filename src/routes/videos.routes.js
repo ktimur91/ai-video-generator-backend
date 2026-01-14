@@ -291,11 +291,55 @@ router.delete("/videos/:id", async (req, res) => {
 });
 
 /**
+ * PATCH /videos/:id
+ * Обновляет данные видео (скрипт, заголовок)
+ */
+router.patch("/videos/:id", async (req, res) => {
+  const { id } = req.params;
+  const { title, scriptText } = req.body;
+
+  try {
+    const video = await prisma.video.findUnique({ where: { id } });
+
+    if (!video) {
+      return res.status(404).json({ error: "Video not found" });
+    }
+
+    const updateData = {};
+    if (title !== undefined) updateData.title = title;
+    if (scriptText !== undefined) updateData.scriptText = scriptText;
+
+    const updatedVideo = await prisma.video.update({
+      where: { id },
+      data: updateData,
+    });
+
+    res.json({
+      success: true,
+      video: {
+        ...updatedVideo,
+        progress: updatedVideo.progress
+          ? JSON.parse(updatedVideo.progress)
+          : null,
+      },
+    });
+  } catch (error) {
+    console.error("Error updating video:", error);
+    res.status(500).json({
+      error: "Failed to update video",
+      message: error.message,
+    });
+  }
+});
+
+/**
  * POST /retry/:id
- * Повторная генерация видео с того шага, на котором произошла ошибка
+ * Повторная генерация видео с указанного шага
+ * Body: { fromStep: 1 | 2 | 3 } - с какого шага начать (1=скрипт, 2=аудио, 3=видео)
  */
 router.post("/retry/:id", async (req, res) => {
   const { id } = req.params;
+  const { fromStep } = req.body; // 1 = script, 2 = audio, 3 = render
 
   try {
     // Получаем видео из БД
@@ -307,24 +351,48 @@ router.post("/retry/:id", async (req, res) => {
       return res.status(404).json({ error: "Video not found" });
     }
 
-    if (video.status !== "FAILED") {
+    // Разрешаем retry для FAILED и COMPLETED/PENDING (для ручного перезапуска)
+    const allowedStatuses = ["FAILED", "COMPLETED", "PENDING"];
+    if (!allowedStatuses.includes(video.status)) {
       return res.status(400).json({
-        error: "Only failed videos can be retried",
+        error: "Cannot retry video in current status",
         currentStatus: video.status,
       });
     }
 
-    // Парсим прогресс чтобы понять с какого шага начать
+    // Парсим прогресс
     let progress = video.progress
       ? JSON.parse(video.progress)
       : createProgress();
 
-    console.log(`Retrying video ${id}, current progress:`, progress);
+    console.log(
+      `Retrying video ${id}, fromStep: ${fromStep}, current progress:`,
+      progress
+    );
 
     // Определяем с какого шага начинать
-    const needsScript = progress.generateScript !== "success";
-    const needsAudio = progress.generateAudio !== "success";
-    const needsRender = progress.renderVideo !== "success";
+    // Если fromStep указан явно - используем его
+    // Иначе определяем автоматически по прогрессу
+    let needsScript, needsAudio, needsRender;
+
+    if (fromStep === 1) {
+      needsScript = true;
+      needsAudio = true;
+      needsRender = true;
+    } else if (fromStep === 2) {
+      needsScript = false;
+      needsAudio = true;
+      needsRender = true;
+    } else if (fromStep === 3) {
+      needsScript = false;
+      needsAudio = false;
+      needsRender = true;
+    } else {
+      // Автоматическое определение по прогрессу
+      needsScript = progress.generateScript !== "success";
+      needsAudio = progress.generateAudio !== "success";
+      needsRender = progress.renderVideo !== "success";
+    }
 
     // Обновляем статус на GENERATING_ASSETS
     video = await prisma.video.update({

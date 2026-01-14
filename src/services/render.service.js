@@ -22,11 +22,16 @@ async function renderVideo(video) {
   // Убедимся, что директория существует
   await fs.mkdir(VIDEOS_DIR, { recursive: true });
 
-  // Подготовка props для Remotion
+  // Аудио доступно через HTTP сервер backend
+  // audioPath = "storage/audio/xxx.mp3" -> http://localhost:3001/storage/audio/xxx.mp3
+  const backendUrl = process.env.BACKEND_URL || "http://localhost:3001";
+  const audioHttpUrl = `${backendUrl}/${audioPath}`;
+
+  // Подготовка props для Remotion (имена должны совпадать со схемой в front-render)
   const props = JSON.stringify({
     title,
-    script: scriptText,
-    audioPath: path.resolve(__dirname, "../../", audioPath),
+    scriptText: scriptText,
+    audioUrl: audioHttpUrl,
   });
 
   // Экранируем props для shell

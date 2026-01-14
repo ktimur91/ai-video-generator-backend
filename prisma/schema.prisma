@@ -23,8 +23,9 @@ model Video {
   status     VideoStatus @default(PENDING)
   title      String
   scriptText String
-  audioPath  String?
+  audioPath  String?     // Для совместимости, основные аудио в segments
   videoPath  String?
-  progress   String?     // JSON с прогрессом: {"generateScript":"success","generateAudio":"pending","renderVideo":"waiting"}
+  segments   String?     // JSON массив сегментов: [{text, keywords, audioPath, audioDuration, stockVideoUrl}]
+  progress   String?     // JSON с детальным прогрессом
   createdAt  DateTime    @default(now())
 }

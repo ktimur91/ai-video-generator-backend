@@ -1,19 +1,27 @@
 const express = require("express");
 const prisma = require("../services/db.service");
 const { generateScript } = require("../services/ai.service");
-const { generateAudio } = require("../services/voice.service");
+const {
+  generateAudio,
+  generateSegmentsAudio,
+} = require("../services/voice.service");
 const { renderVideo } = require("../services/render.service");
+const { findVideosForSegments } = require("../services/pexels.service");
 
 const router = express.Router();
 
-// Хелпер для создания объекта прогресса
+// Расширенный хелпер для создания объекта прогресса (5 шагов)
 const createProgress = (
   generateScript = "waiting",
+  searchVideos = "waiting",
   generateAudio = "waiting",
+  processSegments = "waiting",
   renderVideo = "waiting"
 ) => ({
   generateScript,
+  searchVideos,
   generateAudio,
+  processSegments,
   renderVideo,
 });
 
@@ -30,7 +38,7 @@ const updateVideoProgress = async (videoId, data, progress) => {
 
 /**
  * POST /generate
- * Запускает цепочку генерации: AI -> Voice -> Сохранение в БД
+ * Запускает цепочку генерации: AI -> Pexels -> Voice -> Сохранение в БД
  */
 router.post("/generate", async (req, res) => {
   const { topic } = req.body;
@@ -43,7 +51,7 @@ router.post("/generate", async (req, res) => {
   let progress = createProgress();
 
   try {
-    // Создаем запись в БД со статусом PENDING и начальным прогрессом
+    // Создаем запись в БД со статусом GENERATING_ASSETS и начальным прогрессом
     video = await prisma.video.create({
       data: {
         status: "GENERATING_ASSETS",
@@ -55,30 +63,104 @@ router.post("/generate", async (req, res) => {
 
     console.log(`Created video record: ${video.id}`);
 
-    // Шаг 1: Генерируем сценарий через AI
-    console.log("Generating script...");
-    progress = createProgress("pending", "waiting", "waiting");
+    // Шаг 1: Генерируем сценарий через AI (с сегментами)
+    console.log("Step 1: Generating script with segments...");
+    progress = createProgress(
+      "pending",
+      "waiting",
+      "waiting",
+      "waiting",
+      "waiting"
+    );
     video = await updateVideoProgress(video.id, {}, progress);
 
-    const { title, script } = await generateScript(topic);
+    const aiResult = await generateScript(topic);
+    let segments = aiResult.segments || [];
 
     // Сценарий готов
-    progress = createProgress("success", "pending", "waiting");
+    progress = createProgress(
+      "success",
+      "pending",
+      "waiting",
+      "waiting",
+      "waiting"
+    );
     video = await updateVideoProgress(
       video.id,
-      { title, scriptText: script },
+      {
+        title: aiResult.title,
+        scriptText: aiResult.script,
+        segments: JSON.stringify(segments),
+      },
       progress
     );
 
-    // Шаг 2: Генерируем аудио
-    console.log("Generating audio...");
-    const audioPath = await generateAudio(script, video.id);
+    // Шаг 2: Ищем стоковые видео на Pexels для каждого сегмента
+    console.log("Step 2: Searching stock videos on Pexels...");
+    segments = await findVideosForSegments(segments);
 
-    // Аудио готово
-    progress = createProgress("success", "success", "waiting");
+    progress = createProgress(
+      "success",
+      "success",
+      "pending",
+      "waiting",
+      "waiting"
+    );
     video = await updateVideoProgress(
       video.id,
-      { audioPath, status: "PENDING" },
+      { segments: JSON.stringify(segments) },
+      progress
+    );
+
+    // Шаг 3: Генерируем аудио для каждого сегмента
+    console.log("Step 3: Generating audio for segments...");
+    segments = await generateSegmentsAudio(segments, video.id);
+
+    progress = createProgress(
+      "success",
+      "success",
+      "success",
+      "pending",
+      "waiting"
+    );
+    video = await updateVideoProgress(
+      video.id,
+      { segments: JSON.stringify(segments) },
+      progress
+    );
+
+    // Шаг 4: Генерируем общее аудио для intro/outro (опционально)
+    console.log("Step 4: Processing segments...");
+    // Также генерируем аудио для intro и outro
+    const introAudio = await generateAudio(
+      aiResult.intro || "Привет!",
+      `${video.id}_intro`
+    );
+    const outroAudio = await generateAudio(
+      aiResult.outro || "Подписывайся!",
+      `${video.id}_outro`
+    );
+
+    // Добавляем intro/outro как отдельные сегменты
+    const fullSegments = [
+      { type: "intro", text: aiResult.intro, audioPath: introAudio },
+      ...segments.map((s) => ({ ...s, type: "fact" })),
+      { type: "outro", text: aiResult.outro, audioPath: outroAudio },
+    ];
+
+    progress = createProgress(
+      "success",
+      "success",
+      "success",
+      "success",
+      "waiting"
+    );
+    video = await updateVideoProgress(
+      video.id,
+      {
+        segments: JSON.stringify(fullSegments),
+        status: "PENDING",
+      },
       progress
     );
 
@@ -88,6 +170,7 @@ router.post("/generate", async (req, res) => {
       video: {
         ...video,
         progress: JSON.parse(video.progress),
+        segments: fullSegments,
       },
     });
   } catch (error) {
@@ -102,8 +185,12 @@ router.post("/generate", async (req, res) => {
         ...(progress.generateScript === "pending" && {
           generateScript: "failed",
         }),
+        ...(progress.searchVideos === "pending" && { searchVideos: "failed" }),
         ...(progress.generateAudio === "pending" && {
           generateAudio: "failed",
+        }),
+        ...(progress.processSegments === "pending" && {
+          processSegments: "failed",
         }),
         ...(progress.renderVideo === "pending" && { renderVideo: "failed" }),
       };
@@ -144,17 +231,24 @@ router.post("/render/:id", async (req, res) => {
       return res.status(404).json({ error: "Video not found" });
     }
 
-    if (!video.audioPath) {
-      return res.status(400).json({ error: "Audio not generated yet" });
+    // Проверяем что есть сегменты
+    if (!video.segments) {
+      return res.status(400).json({ error: "Segments not generated yet" });
     }
 
     // Парсим текущий прогресс
     let progress = video.progress
       ? JSON.parse(video.progress)
-      : createProgress("success", "success", "waiting");
+      : createProgress("success", "success", "success", "success", "waiting");
 
     // Обновляем статус на RENDERING и прогресс
-    progress = createProgress("success", "success", "pending");
+    progress = createProgress(
+      "success",
+      "success",
+      "success",
+      "success",
+      "pending"
+    );
     await updateVideoProgress(id, { status: "RENDERING" }, progress);
 
     // Запускаем рендеринг (это может занять время)
@@ -162,7 +256,13 @@ router.post("/render/:id", async (req, res) => {
     const videoPath = await renderVideo(video);
 
     // Обновляем запись с путем к видео и статусом COMPLETED
-    progress = createProgress("success", "success", "success");
+    progress = createProgress(
+      "success",
+      "success",
+      "success",
+      "success",
+      "success"
+    );
     const updatedVideo = await updateVideoProgress(
       id,
       {
@@ -184,7 +284,13 @@ router.post("/render/:id", async (req, res) => {
     console.error("Render error:", error);
 
     // Обновляем статус на FAILED с прогрессом
-    const failedProgress = createProgress("success", "success", "failed");
+    const failedProgress = createProgress(
+      "success",
+      "success",
+      "success",
+      "success",
+      "failed"
+    );
     await prisma.video
       .update({
         where: { id },
@@ -335,11 +441,12 @@ router.patch("/videos/:id", async (req, res) => {
 /**
  * POST /retry/:id
  * Повторная генерация видео с указанного шага
- * Body: { fromStep: 1 | 2 | 3 } - с какого шага начать (1=скрипт, 2=аудио, 3=видео)
+ * Body: { fromStep: 1-5 } - с какого шага начать
+ * 1=скрипт, 2=поиск видео, 3=аудио, 4=обработка сегментов, 5=рендеринг
  */
 router.post("/retry/:id", async (req, res) => {
   const { id } = req.params;
-  const { fromStep } = req.body; // 1 = script, 2 = audio, 3 = render
+  const { fromStep } = req.body;
 
   try {
     // Получаем видео из БД
@@ -360,39 +467,16 @@ router.post("/retry/:id", async (req, res) => {
       });
     }
 
-    // Парсим прогресс
+    // Парсим текущие данные
     let progress = video.progress
       ? JSON.parse(video.progress)
       : createProgress();
+    let segments = video.segments ? JSON.parse(video.segments) : [];
 
-    console.log(
-      `Retrying video ${id}, fromStep: ${fromStep}, current progress:`,
-      progress
-    );
+    console.log(`Retrying video ${id}, fromStep: ${fromStep}`);
 
     // Определяем с какого шага начинать
-    // Если fromStep указан явно - используем его
-    // Иначе определяем автоматически по прогрессу
-    let needsScript, needsAudio, needsRender;
-
-    if (fromStep === 1) {
-      needsScript = true;
-      needsAudio = true;
-      needsRender = true;
-    } else if (fromStep === 2) {
-      needsScript = false;
-      needsAudio = true;
-      needsRender = true;
-    } else if (fromStep === 3) {
-      needsScript = false;
-      needsAudio = false;
-      needsRender = true;
-    } else {
-      // Автоматическое определение по прогрессу
-      needsScript = progress.generateScript !== "success";
-      needsAudio = progress.generateAudio !== "success";
-      needsRender = progress.renderVideo !== "success";
-    }
+    const step = fromStep || 1;
 
     // Обновляем статус на GENERATING_ASSETS
     video = await prisma.video.update({
@@ -400,50 +484,198 @@ router.post("/retry/:id", async (req, res) => {
       data: { status: "GENERATING_ASSETS" },
     });
 
-    // Шаг 1: Генерация скрипта (если нужно)
-    if (needsScript) {
+    // Шаг 1: Генерация скрипта
+    if (step <= 1) {
       console.log(`[Retry] Step 1: Generating script...`);
-      progress = createProgress("pending", "waiting", "waiting");
+      progress = createProgress(
+        "pending",
+        "waiting",
+        "waiting",
+        "waiting",
+        "waiting"
+      );
       video = await updateVideoProgress(video.id, {}, progress);
 
-      // Нам нужен topic - попробуем извлечь из title или использовать существующий scriptText
       const topic =
-        video.title !== "Generating..." ? video.title : "Продолжение темы";
-      const { title, script } = await generateScript(topic);
+        video.title !== "Generating..." ? video.title : "Интересные факты";
+      const aiResult = await generateScript(topic);
+      segments = aiResult.segments || [];
 
-      progress = createProgress("success", "pending", "waiting");
+      progress = createProgress(
+        "success",
+        "pending",
+        "waiting",
+        "waiting",
+        "waiting"
+      );
       video = await updateVideoProgress(
         video.id,
-        { title, scriptText: script },
+        {
+          title: aiResult.title,
+          scriptText: aiResult.script,
+          segments: JSON.stringify(segments),
+        },
         progress
       );
     }
 
-    // Шаг 2: Генерация аудио (если нужно)
-    if (needsAudio) {
-      console.log(`[Retry] Step 2: Generating audio...`);
-
-      // Если скрипт не генерировался сейчас, обновляем прогресс
-      if (!needsScript) {
-        progress = createProgress("success", "pending", "waiting");
+    // Шаг 2: Поиск стоковых видео
+    if (step <= 2) {
+      console.log(`[Retry] Step 2: Searching stock videos...`);
+      if (step === 2) {
+        progress = createProgress(
+          "success",
+          "pending",
+          "waiting",
+          "waiting",
+          "waiting"
+        );
         video = await updateVideoProgress(video.id, {}, progress);
       }
 
-      const audioPath = await generateAudio(video.scriptText, video.id);
+      // Получаем сегменты для поиска (только те что без stockVideo)
+      const segmentsToSearch = segments.filter(
+        (s) => !s.stockVideo && s.searchKeywords
+      );
+      if (segmentsToSearch.length > 0) {
+        const updatedSegments = await findVideosForSegments(segmentsToSearch);
+        // Обновляем сегменты
+        segments = segments.map((s) => {
+          const updated = updatedSegments.find((u) => u.number === s.number);
+          return updated || s;
+        });
+      }
 
-      progress = createProgress("success", "success", "waiting");
+      progress = createProgress(
+        "success",
+        "success",
+        "pending",
+        "waiting",
+        "waiting"
+      );
       video = await updateVideoProgress(
         video.id,
-        { audioPath, status: "PENDING" },
+        {
+          segments: JSON.stringify(segments),
+        },
         progress
       );
     }
 
-    // Шаг 3: Рендеринг видео (если нужно И если аудио готово)
-    if (needsRender && video.audioPath) {
-      console.log(`[Retry] Step 3: Rendering video...`);
+    // Шаг 3: Генерация аудио для сегментов
+    if (step <= 3) {
+      console.log(`[Retry] Step 3: Generating audio for segments...`);
+      if (step === 3) {
+        progress = createProgress(
+          "success",
+          "success",
+          "pending",
+          "waiting",
+          "waiting"
+        );
+        video = await updateVideoProgress(video.id, {}, progress);
+      }
 
-      progress = createProgress("success", "success", "pending");
+      // Генерируем аудио только для сегментов без аудио
+      const factSegments = segments.filter(
+        (s) => s.type !== "intro" && s.type !== "outro"
+      );
+      const segmentsWithAudio = await generateSegmentsAudio(
+        factSegments.filter((s) => !s.audioPath),
+        video.id
+      );
+
+      // Обновляем сегменты
+      segments = segments.map((s) => {
+        const updated = segmentsWithAudio.find((u) => u.number === s.number);
+        return updated || s;
+      });
+
+      progress = createProgress(
+        "success",
+        "success",
+        "success",
+        "pending",
+        "waiting"
+      );
+      video = await updateVideoProgress(
+        video.id,
+        {
+          segments: JSON.stringify(segments),
+        },
+        progress
+      );
+    }
+
+    // Шаг 4: Обработка сегментов (intro/outro)
+    if (step <= 4) {
+      console.log(`[Retry] Step 4: Processing segments...`);
+      if (step === 4) {
+        progress = createProgress(
+          "success",
+          "success",
+          "success",
+          "pending",
+          "waiting"
+        );
+        video = await updateVideoProgress(video.id, {}, progress);
+      }
+
+      // Проверяем наличие intro/outro
+      const hasIntro = segments.some((s) => s.type === "intro");
+      const hasOutro = segments.some((s) => s.type === "outro");
+
+      if (!hasIntro) {
+        const introAudio = await generateAudio(
+          "Привет! Смотри интересные факты!",
+          `${video.id}_intro`
+        );
+        segments.unshift({
+          type: "intro",
+          text: "Привет!",
+          audioPath: introAudio,
+        });
+      }
+
+      if (!hasOutro) {
+        const outroAudio = await generateAudio(
+          "Подпишись на канал!",
+          `${video.id}_outro`
+        );
+        segments.push({
+          type: "outro",
+          text: "Подпишись!",
+          audioPath: outroAudio,
+        });
+      }
+
+      progress = createProgress(
+        "success",
+        "success",
+        "success",
+        "success",
+        "waiting"
+      );
+      video = await updateVideoProgress(
+        video.id,
+        {
+          segments: JSON.stringify(segments),
+          status: "PENDING",
+        },
+        progress
+      );
+    }
+
+    // Шаг 5: Рендеринг видео
+    if (step <= 5 && segments.length > 0) {
+      console.log(`[Retry] Step 5: Rendering video...`);
+      progress = createProgress(
+        "success",
+        "success",
+        "success",
+        "success",
+        "pending"
+      );
       video = await updateVideoProgress(
         video.id,
         { status: "RENDERING" },
@@ -452,18 +684,21 @@ router.post("/retry/:id", async (req, res) => {
 
       const videoPath = await renderVideo(video);
 
-      progress = createProgress("success", "success", "success");
+      progress = createProgress(
+        "success",
+        "success",
+        "success",
+        "success",
+        "success"
+      );
       video = await updateVideoProgress(
         video.id,
-        { videoPath, status: "COMPLETED" },
+        {
+          videoPath,
+          status: "COMPLETED",
+        },
         progress
       );
-    } else if (!needsRender) {
-      // Все шаги уже выполнены
-      video = await prisma.video.update({
-        where: { id },
-        data: { status: "COMPLETED" },
-      });
     }
 
     res.json({
@@ -475,6 +710,10 @@ router.post("/retry/:id", async (req, res) => {
           typeof video.progress === "string"
             ? JSON.parse(video.progress)
             : progress,
+        segments:
+          typeof video.segments === "string"
+            ? JSON.parse(video.segments)
+            : segments,
       },
     });
   } catch (error) {
@@ -493,10 +732,18 @@ router.post("/retry/:id", async (req, res) => {
           currentProgress.generateScript === "pending"
             ? "failed"
             : currentProgress.generateScript,
+        searchVideos:
+          currentProgress.searchVideos === "pending"
+            ? "failed"
+            : currentProgress.searchVideos,
         generateAudio:
           currentProgress.generateAudio === "pending"
             ? "failed"
             : currentProgress.generateAudio,
+        processSegments:
+          currentProgress.processSegments === "pending"
+            ? "failed"
+            : currentProgress.processSegments,
         renderVideo:
           currentProgress.renderVideo === "pending"
             ? "failed"

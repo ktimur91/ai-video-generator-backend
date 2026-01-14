@@ -11,37 +11,46 @@ const FRONT_RENDER_DIR = path.join(__dirname, "../../../front-render");
  * @param {string} video.id - ID видео
  * @param {string} video.title - Заголовок видео
  * @param {string} video.scriptText - Текст сценария
- * @param {string} video.audioPath - Путь к аудио файлу
+ * @param {string} video.segments - JSON строка с сегментами
  * @returns {Promise<string>} - Путь к созданному видео файлу
  */
 async function renderVideo(video) {
-  const { id, title, scriptText, audioPath } = video;
+  const { id, title, scriptText, segments: segmentsJson } = video;
   const outputFilename = `${id}.mp4`;
   const outputPath = path.join(VIDEOS_DIR, outputFilename);
 
   // Убедимся, что директория существует
   await fs.mkdir(VIDEOS_DIR, { recursive: true });
 
-  // Аудио доступно через HTTP сервер backend
-  // audioPath = "storage/audio/xxx.mp3" -> http://localhost:3001/storage/audio/xxx.mp3
-  const backendUrl = process.env.BACKEND_URL || "http://localhost:3001";
-  const audioHttpUrl = `${backendUrl}/${audioPath}`;
+  // Парсим сегменты
+  const segments = segmentsJson ? JSON.parse(segmentsJson) : [];
 
-  // Подготовка props для Remotion (имена должны совпадать со схемой в front-render)
+  // Backend URL для формирования HTTP ссылок
+  const backendUrl = process.env.BACKEND_URL || "http://localhost:3001";
+
+  // Преобразуем пути к аудио в HTTP URLs
+  const segmentsWithUrls = segments.map((segment) => ({
+    ...segment,
+    audioUrl: segment.audioPath ? `${backendUrl}/${segment.audioPath}` : null,
+  }));
+
+  // Подготовка props для Remotion
   const props = JSON.stringify({
     title,
     scriptText: scriptText,
-    audioUrl: audioHttpUrl,
+    segments: segmentsWithUrls,
   });
 
   // Экранируем props для shell
   const escapedProps = props.replace(/'/g, "'\\''");
 
   // Формируем команду для Remotion CLI
-  // Формат: npx remotion render <entry-file> <composition-id> <output-file>
-  const command = `cd "${FRONT_RENDER_DIR}" && npx remotion render src/index.ts MainVideo "${outputPath}" --props='${escapedProps}'`;
+  // Используем SegmentVideo композицию для нового формата
+  const composition = segments.length > 0 ? "SegmentVideo" : "MainVideo";
+  const command = `cd "${FRONT_RENDER_DIR}" && npx remotion render src/index.ts ${composition} "${outputPath}" --props='${escapedProps}'`;
 
   console.log("Executing render command:", command);
+  console.log("Segments count:", segments.length);
 
   return new Promise((resolve, reject) => {
     exec(command, { maxBuffer: 1024 * 1024 * 50 }, (error, stdout, stderr) => {

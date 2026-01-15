@@ -19,13 +19,14 @@ enum VideoStatus {
 }
 
 model Video {
-  id         String      @id @default(uuid())
-  status     VideoStatus @default(PENDING)
-  title      String
-  scriptText String
-  audioPath  String?     // Для совместимости, основные аудио в segments
-  videoPath  String?
-  segments   String?     // JSON массив сегментов: [{text, keywords, audioPath, audioDuration, stockVideoUrl}]
-  progress   String?     // JSON с детальным прогрессом
-  createdAt  DateTime    @default(now())
+  id                 String      @id @default(uuid())
+  status             VideoStatus @default(PENDING)
+  title              String
+  scriptText         String
+  audioPath          String?     // Для совместимости, основные аудио в segments
+  videoPath          String?
+  segments           String?     // JSON массив сегментов: [{text, keywords, audioPath, audioDuration, stockVideoUrl}]
+  progress           String?     // JSON с детальным прогрессом
+  backgroundMusicUrl String?     // URL глобальной фоновой музыки
+  createdAt          DateTime    @default(now())
 }

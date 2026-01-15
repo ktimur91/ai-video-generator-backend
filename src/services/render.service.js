@@ -12,10 +12,17 @@ const FRONT_RENDER_DIR = path.join(__dirname, "../../../front-render");
  * @param {string} video.title - Заголовок видео
  * @param {string} video.scriptText - Текст сценария
  * @param {string} video.segments - JSON строка с сегментами
+ * @param {string} video.backgroundMusicUrl - URL глобальной фоновой музыки
  * @returns {Promise<string>} - Путь к созданному видео файлу
  */
 async function renderVideo(video) {
-  const { id, title, scriptText, segments: segmentsJson } = video;
+  const {
+    id,
+    title,
+    scriptText,
+    segments: segmentsJson,
+    backgroundMusicUrl,
+  } = video;
   const outputFilename = `${id}.mp4`;
   const outputPath = path.join(VIDEOS_DIR, outputFilename);
 
@@ -34,11 +41,12 @@ async function renderVideo(video) {
     audioUrl: segment.audioPath ? `${backendUrl}/${segment.audioPath}` : null,
   }));
 
-  // Подготовка props для Remotion
+  // Подготовка props для Remotion (с глобальной фоновой музыкой)
   const props = JSON.stringify({
     title,
     scriptText: scriptText,
     segments: segmentsWithUrls,
+    backgroundMusicUrl: backgroundMusicUrl || null,
   });
 
   // Экранируем props для shell

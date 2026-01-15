@@ -6,11 +6,15 @@ const {
   generateSegmentsAudio,
 } = require("../services/voice.service");
 const { renderVideo } = require("../services/render.service");
-const { findVideosForSegments } = require("../services/pexels.service");
 const {
-  getRandomPreview,
-  getPreviewDuration,
-} = require("../services/preview.service");
+  findVideosForSegments: findVideosForSegmentsPexels,
+  searchSingleVideo: searchSingleVideoPexels,
+} = require("../services/pexels.service");
+const {
+  findVideosForSegments: findVideosForSegmentsPixabay,
+  searchSingleVideo: searchSingleVideoPixabay,
+} = require("../services/pixabay.service");
+const { getRandomBackgroundMusic } = require("../services/music.service");
 
 const router = express.Router();
 
@@ -42,14 +46,27 @@ const updateVideoProgress = async (videoId, data, progress) => {
 
 /**
  * POST /generate
- * Запускает цепочку генерации: AI -> Pexels -> Voice -> Сохранение в БД
+ * Запускает цепочку генерации: AI -> Pexels/Pixabay -> Voice -> Сохранение в БД
  */
 router.post("/generate", async (req, res) => {
-  const { topic } = req.body;
+  const { topic, videoSource = "pexels" } = req.body;
 
   if (!topic) {
     return res.status(400).json({ error: "Topic is required" });
   }
+
+  // Выбираем функции поиска в зависимости от источника
+  const findVideosForSegments =
+    videoSource === "pixabay"
+      ? findVideosForSegmentsPixabay
+      : findVideosForSegmentsPexels;
+
+  const searchSingleVideo =
+    videoSource === "pixabay"
+      ? searchSingleVideoPixabay
+      : searchSingleVideoPexels;
+
+  console.log(`[VideoSource] Using ${videoSource} for video search`);
 
   let video = null;
   let progress = createProgress();
@@ -99,8 +116,8 @@ router.post("/generate", async (req, res) => {
       progress
     );
 
-    // Шаг 2: Ищем стоковые видео на Pexels для каждого сегмента
-    console.log("Step 2: Searching stock videos on Pexels...");
+    // Шаг 2: Ищем стоковые видео для каждого сегмента
+    console.log(`Step 2: Searching stock videos on ${videoSource}...`);
     segments = await findVideosForSegments(segments);
 
     progress = createProgress(
@@ -133,18 +150,38 @@ router.post("/generate", async (req, res) => {
       progress
     );
 
-    // Шаг 4: Генерируем общее аудио для intro/outro и добавляем заставку
+    // Шаг 4: Генерируем общее аудио для intro/outro и ищем видео для них
     console.log("Step 4: Processing segments...");
 
-    // Получаем рандомную заставку
-    const preview = await getRandomPreview();
-    let previewDuration = 3;
-    if (preview) {
-      previewDuration = await getPreviewDuration(preview.filename);
-      console.log(`[Preview] Duration: ${previewDuration.toFixed(1)}s`);
+    // Ищем видео для intro и outro из выбранного источника
+    const introKeywords = aiResult.introKeywords || [
+      "energy",
+      "dynamic",
+      "action",
+    ];
+    const outroKeywords = aiResult.outroKeywords || [
+      "subscribe",
+      "like button",
+      "notification bell",
+    ];
+
+    console.log(
+      `[Intro] Searching video with keywords: ${introKeywords.join(", ")}`
+    );
+    const introVideo = await searchSingleVideo(introKeywords, "intro");
+
+    console.log(
+      `[Outro] Searching video with keywords: ${outroKeywords.join(", ")}`
+    );
+    const outroVideo = await searchSingleVideo(outroKeywords, "outro");
+
+    // Получаем рандомную фоновую музыку (будет глобальной для всего видео)
+    const bgMusic = await getRandomBackgroundMusic();
+    if (bgMusic) {
+      console.log(`[Music] Using background music: ${bgMusic.filename}`);
     }
 
-    // Генерируем аудио для intro и outro
+    // Генерируем аудио для intro и outro (теперь возвращает {path, duration})
     const introAudio = await generateAudio(
       aiResult.intro || "Привет!",
       `${video.id}_intro`
@@ -154,23 +191,35 @@ router.post("/generate", async (req, res) => {
       `${video.id}_outro`
     );
 
-    // Добавляем заставку + intro/outro как отдельные сегменты
+    // Собираем все сегменты
+    // Фоновая музыка теперь будет глобальной (передаётся на уровне видео, не сегментов)
     const fullSegments = [
-      // Заставка в начале (без текста, только видео)
-      ...(preview
-        ? [
-            {
-              type: "preview",
-              text: "",
-              previewUrl: preview.url,
-              audioDuration: previewDuration,
-            },
-          ]
-        : []),
-      { type: "intro", text: aiResult.intro, audioPath: introAudio },
-      ...segments.map((s) => ({ ...s, type: "fact" })),
-      { type: "outro", text: aiResult.outro, audioPath: outroAudio },
+      {
+        type: "intro",
+        text: aiResult.intro,
+        audioPath: introAudio.path,
+        audioDuration: introAudio.duration, // Длительность для синхронизации видео
+        stockVideo: introVideo, // Видео из выбранного источника
+      },
+      ...segments.map((s) => ({
+        ...s,
+        type: "fact",
+      })),
+      {
+        type: "outro",
+        text: aiResult.outro,
+        audioPath: outroAudio.path,
+        audioDuration: outroAudio.duration, // Длительность для синхронизации видео
+        stockVideo: outroVideo, // Видео из выбранного источника
+      },
     ];
+
+    // Сохраняем URL фоновой музыки отдельно для глобального использования
+    const videoData = {
+      segments: JSON.stringify(fullSegments),
+      backgroundMusicUrl: bgMusic?.url || null, // Глобальная фоновая музыка
+      status: "PENDING",
+    };
 
     progress = createProgress(
       "success",
@@ -179,14 +228,7 @@ router.post("/generate", async (req, res) => {
       "success",
       "waiting"
     );
-    video = await updateVideoProgress(
-      video.id,
-      {
-        segments: JSON.stringify(fullSegments),
-        status: "PENDING",
-      },
-      progress
-    );
+    video = await updateVideoProgress(video.id, videoData, progress);
 
     res.json({
       success: true,
@@ -787,6 +829,180 @@ router.post("/retry/:id", async (req, res) => {
 
     res.status(500).json({
       error: "Retry failed",
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * GET /search-videos
+ * Поиск видео по ключевым словам для ручного выбора фона
+ */
+router.get("/search-videos", async (req, res) => {
+  const { q, source = "pexels" } = req.query;
+
+  if (!q) {
+    return res.status(400).json({ error: "Query parameter 'q' is required" });
+  }
+
+  try {
+    const keywords = q.split(",").map((k) => k.trim());
+    let videos = [];
+
+    if (source === "pixabay") {
+      // Делаем прямой запрос к Pixabay API чтобы получить список видео
+      const axios = require("axios");
+      const PIXABAY_API_KEY =
+        process.env.PIXABAY_API_KEY || "54210869-6670fd220da2b2c1de7759e59";
+
+      console.log(`[Pixabay Search] Query: ${keywords[0]}`);
+
+      const response = await axios.get("https://pixabay.com/api/videos/", {
+        params: {
+          key: PIXABAY_API_KEY,
+          q: keywords[0],
+          per_page: 50, // Увеличим чтобы больше шансов найти вертикальные
+          video_type: "all", // Изменим на all чтобы больше результатов
+          safesearch: true,
+        },
+      });
+
+      console.log(
+        `[Pixabay Search] Found ${response.data.hits?.length || 0} videos`
+      );
+
+      // Сначала пробуем найти вертикальные видео
+      let filteredVideos = (response.data.hits || []).filter((v) => {
+        const medium = v.videos?.medium;
+        const isVertical = medium && medium.height > medium.width;
+        const durationOk = v.duration >= 3 && v.duration <= 60;
+        return isVertical && durationOk;
+      });
+
+      console.log(`[Pixabay Search] Vertical videos: ${filteredVideos.length}`);
+
+      // Если вертикальных нет, берем любые подходящие по длительности
+      if (filteredVideos.length === 0) {
+        console.log(`[Pixabay Search] No vertical videos, using all videos`);
+        filteredVideos = (response.data.hits || []).filter((v) => {
+          return v.duration >= 3 && v.duration <= 60;
+        });
+      }
+
+      videos = filteredVideos
+        .slice(0, 12)
+        .map((v) => {
+          const videoFile =
+            v.videos?.large || v.videos?.medium || v.videos?.small;
+          return {
+            id: v.id,
+            url: videoFile?.url,
+            width: videoFile?.width,
+            height: videoFile?.height,
+            duration: v.duration,
+            photographer: v.user,
+            thumbnail: v.videos?.tiny?.thumbnail || null,
+          };
+        })
+        .filter((v) => v.url);
+
+      console.log(`[Pixabay Search] Final videos: ${videos.length}`);
+    } else {
+      const { searchVideo } = require("../services/pexels.service");
+      // Делаем прямой запрос к API чтобы получить список видео
+      const axios = require("axios");
+      const PEXELS_API_KEY =
+        process.env.PEXELS_API_KEY ||
+        "js7zzQQH8u0HaLesjtFvn9WOBSpgwH6rXXvtqFSCANXiQQvovLTeTMjO";
+
+      const response = await axios.get("https://api.pexels.com/videos/search", {
+        headers: { Authorization: PEXELS_API_KEY },
+        params: {
+          query: keywords[0],
+          orientation: "portrait",
+          per_page: 12,
+          size: "medium",
+        },
+      });
+
+      videos = (response.data.videos || [])
+        .filter((v) => v.duration >= 3 && v.duration <= 60)
+        .map((v) => {
+          const videoFile =
+            v.video_files.find((f) => f.height > f.width) || v.video_files[0];
+          return {
+            id: v.id,
+            url: videoFile?.link,
+            width: videoFile?.width,
+            height: videoFile?.height,
+            duration: v.duration,
+            photographer: v.user?.name,
+            thumbnail: v.image,
+          };
+        })
+        .filter((v) => v.url);
+    }
+
+    res.json({
+      success: true,
+      source,
+      query: q,
+      videos,
+    });
+  } catch (error) {
+    console.error("Error searching videos:", error);
+    res.status(500).json({
+      error: "Failed to search videos",
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * PATCH /videos/:id/segments
+ * Обновляет сегменты видео (для ручной замены видео-фонов)
+ */
+router.patch("/videos/:id/segments", async (req, res) => {
+  const { id } = req.params;
+  const { segments } = req.body;
+
+  if (!segments || !Array.isArray(segments)) {
+    return res.status(400).json({ error: "Segments array is required" });
+  }
+
+  try {
+    const video = await prisma.video.findUnique({
+      where: { id },
+    });
+
+    if (!video) {
+      return res.status(404).json({ error: "Video not found" });
+    }
+
+    // Обновляем сегменты
+    const updatedVideo = await prisma.video.update({
+      where: { id },
+      data: {
+        segments: JSON.stringify(segments),
+        status: "PENDING", // Сбрасываем статус для перерендера
+      },
+    });
+
+    res.json({
+      success: true,
+      message: "Segments updated successfully",
+      video: {
+        ...updatedVideo,
+        segments: JSON.parse(updatedVideo.segments),
+        progress: updatedVideo.progress
+          ? JSON.parse(updatedVideo.progress)
+          : null,
+      },
+    });
+  } catch (error) {
+    console.error("Error updating segments:", error);
+    res.status(500).json({
+      error: "Failed to update segments",
       message: error.message,
     });
   }

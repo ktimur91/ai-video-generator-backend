@@ -11,7 +11,7 @@ const EDGE_TTS_PATH = "/Users/apple/Library/Python/3.9/bin/edge-tts";
  * Генерирует аудио файл из текста с помощью Edge TTS CLI (Python)
  * @param {string} text - Текст для озвучивания
  * @param {string} videoId - ID видео для именования файла
- * @returns {Promise<string>} - Путь к созданному аудио файлу
+ * @returns {Promise<{path: string, duration: number}>} - Путь и длительность аудио
  */
 async function generateAudio(text, videoId) {
   const voice = process.env.TTS_VOICE || "ru-RU-DmitryNeural";
@@ -33,7 +33,8 @@ async function generateAudio(text, videoId) {
   await fs.writeFile(textFilePath, cleanText, "utf-8");
 
   return new Promise((resolve, reject) => {
-    const command = `"${EDGE_TTS_PATH}" --voice "${voice}" --file "${textFilePath}" --write-media "${outputPath}"`;
+    // Добавляем --rate для ускорения речи и --pitch для энергичности
+    const command = `"${EDGE_TTS_PATH}" --voice "${voice}" --rate="+25%" --pitch="+5Hz" --file "${textFilePath}" --write-media "${outputPath}"`;
 
     console.log("Executing TTS command:", command);
 
@@ -61,8 +62,21 @@ async function generateAudio(text, videoId) {
 
         console.log(`Audio generated successfully: ${outputPath}`);
 
-        // Возвращаем относительный путь для хранения в БД
-        resolve(`storage/audio/${filename}`);
+        // Получаем длительность аудио
+        try {
+          const duration = await getAudioDuration(outputPath);
+          console.log(`Audio duration: ${duration.toFixed(2)}s`);
+          resolve({
+            path: `storage/audio/${filename}`,
+            duration: duration,
+          });
+        } catch (durError) {
+          // Если не удалось получить длительность, возвращаем 3 секунды по умолчанию
+          resolve({
+            path: `storage/audio/${filename}`,
+            duration: 3,
+          });
+        }
       }
     );
   });
@@ -120,7 +134,8 @@ async function generateSegmentAudio(text, videoId, segmentNumber) {
   await fs.writeFile(textFilePath, cleanText, "utf-8");
 
   return new Promise((resolve, reject) => {
-    const command = `"${EDGE_TTS_PATH}" --voice "${voice}" --file "${textFilePath}" --write-media "${outputPath}"`;
+    // Добавляем --rate для ускорения речи и --pitch для энергичности
+    const command = `"${EDGE_TTS_PATH}" --voice "${voice}" --rate="+25%" --pitch="+5Hz" --file "${textFilePath}" --write-media "${outputPath}"`;
 
     console.log(
       `Generating audio for segment ${segmentNumber}:`,

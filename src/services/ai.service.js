@@ -12,8 +12,7 @@ const openai = new OpenAI({
 async function generateScript(topic) {
   console.log(`[AI] Generating script for: "${topic}"`);
 
-  const systemPrompt = `Ты - креативный сценарист для YouTube Shorts.
-Твоя задача - понять запрос пользователя и создать сценарий с нужным количеством фактов/событий/советов.
+  const systemPrompt = `Ты - креативный сценарист для YouTube Shorts. Твоя задача - создавать ЭНЕРГИЧНЫЕ и ДИНАМИЧНЫЕ сценарии!
 
 Пользователь может написать что угодно, например:
 - "5 фактов о животных" → сделай 5 фактов
@@ -26,10 +25,28 @@ async function generateScript(topic) {
 2. Каждый пункт должен быть отдельным сегментом с ключевыми словами для поиска видео
 3. Минимум 1, максимум 10 пунктов
 
+=== INTRO (ОЧЕНЬ ВАЖНО!) ===
+- Intro должно быть МАКСИМАЛЬНО КОРОТКИМ: 3-7 слов МАКСИМУМ!
+- Должно быть энергичным и цепляющим
+- Примеры: "Слушай это!", "Топ пять для тебя!", "Вот это факты!", "Знал об этом?", "Погнали!", "Смотри что нашёл!"
+- НИКОГДА не делай длинные вступления!
+- Добавь introKeywords для поиска динамичного видео фона
+
+=== OUTRO (ОЧЕНЬ ВАЖНО!) ===
+- Outro должно быть ЭМОЦИОНАЛЬНЫМ и ПРИЗЫВАЮЩИМ к действию
+- ОБЯЗАТЕЛЬНО включи ВСЕ призывы: лайк, подписка, колокольчик, комментарий
+- Каждый раз формулируй ПО-РАЗНОМУ и КРЕАТИВНО!
+- Примеры:
+  - "Ставь лайк! Подпишись и жми колокольчик! Напиши в комментах, какой факт удивил!"
+  - "Лайкни если зашло! Подписывайся, включай уведомления! Жду твой коммент!"
+  - "Огонь? Тогда лайк! Подпишись, колокольчик ON! Пиши что думаешь!"
+- Добавь outroKeywords для поиска видео с социальными иконками
+
 Отвечай ТОЛЬКО в формате JSON:
 {
   "title": "заголовок видео",
-  "intro": "короткое вступление (1-2 предложения)",
+  "intro": "КОРОТКОЕ вступление (3-7 слов максимум!)",
+  "introKeywords": ["energy", "dynamic", "action"],
   "segments": [
     {
       "number": 1,
@@ -37,11 +54,11 @@ async function generateScript(topic) {
       "searchKeywords": ["keyword1", "keyword2", "keyword3"]
     }
   ],
-  "outro": "призыв к действию (1 предложение)"
+  "outro": "ЭМОЦИОНАЛЬНЫЙ призыв с лайком, подпиской, колокольчиком и комментарием!",
+  "outroKeywords": ["subscribe", "like button", "notification bell"]
 }
 
-Ключевые слова searchKeywords должны быть на АНГЛИЙСКОМ языке для поиска видео на стоках.
-Например, для факта про слонов: ["elephant", "african elephant", "elephant walking"]`;
+Ключевые слова должны быть на АНГЛИЙСКОМ языке для поиска видео на стоках.`;
 
   const userPrompt = topic;
 
@@ -77,8 +94,14 @@ async function generateScript(topic) {
       title: result.title,
       script: fullScript,
       intro: result.intro,
+      introKeywords: result.introKeywords || ["energy", "dynamic", "action"],
       segments: result.segments,
       outro: result.outro,
+      outroKeywords: result.outroKeywords || [
+        "subscribe",
+        "like button",
+        "notification bell",
+      ],
     };
   } catch (error) {
     console.error("Error generating script:", error);

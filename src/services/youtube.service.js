@@ -12,8 +12,6 @@ let oauth2Client = null;
  * Инициализация OAuth2 клиента
  */
 function getOAuth2Client() {
-  if (oauth2Client) return oauth2Client;
-
   const clientId = process.env.YOUTUBE_CLIENT_ID;
   const clientSecret = process.env.YOUTUBE_CLIENT_SECRET;
   const redirectUri =
@@ -26,19 +24,22 @@ function getOAuth2Client() {
     );
   }
 
-  oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+  // Создаём клиент если ещё не создан
+  if (!oauth2Client) {
+    oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
 
-  // Попытка загрузить сохраненные токены
+    // Автообновление токенов
+    oauth2Client.on("tokens", (tokens) => {
+      console.log("[YouTube] Tokens refreshed");
+      saveTokens(tokens);
+    });
+  }
+
+  // Всегда загружаем актуальные токены
   const tokens = loadTokens();
   if (tokens) {
     oauth2Client.setCredentials(tokens);
   }
-
-  // Автообновление токенов
-  oauth2Client.on("tokens", (tokens) => {
-    console.log("[YouTube] Tokens refreshed");
-    saveTokens(tokens);
-  });
 
   return oauth2Client;
 }
@@ -116,25 +117,44 @@ function isAuthenticated() {
  * Получение информации о канале
  */
 async function getChannelInfo() {
-  const client = getOAuth2Client();
-  const youtube = google.youtube({ version: "v3", auth: client });
+  try {
+    const client = getOAuth2Client();
+    const youtube = google.youtube({ version: "v3", auth: client });
 
-  const response = await youtube.channels.list({
-    part: "snippet,statistics",
-    mine: true,
-  });
+    console.log("[YouTube] Fetching channel info...");
 
-  if (response.data.items && response.data.items.length > 0) {
-    const channel = response.data.items[0];
-    return {
-      id: channel.id,
-      title: channel.snippet.title,
-      thumbnail: channel.snippet.thumbnails?.default?.url,
-      subscriberCount: channel.statistics.subscriberCount,
-    };
+    const response = await youtube.channels.list({
+      part: "snippet,statistics",
+      mine: true,
+    });
+
+    console.log(
+      "[YouTube] Channel API response:",
+      JSON.stringify(response.data, null, 2)
+    );
+
+    if (response.data.items && response.data.items.length > 0) {
+      const channel = response.data.items[0];
+      return {
+        id: channel.id,
+        title: channel.snippet.title,
+        thumbnail: channel.snippet.thumbnails?.default?.url,
+        subscriberCount: channel.statistics.subscriberCount,
+      };
+    }
+
+    console.log("[YouTube] No channel items found");
+    return null;
+  } catch (error) {
+    console.error("[YouTube] getChannelInfo error:", error.message);
+    if (error.response) {
+      console.error(
+        "[YouTube] Error response:",
+        JSON.stringify(error.response.data, null, 2)
+      );
+    }
+    throw error;
   }
-
-  return null;
 }
 
 /**

@@ -97,6 +97,8 @@ router.post("/generate", async (req, res) => {
 
     const aiResult = await generateScript(topic);
     let segments = aiResult.segments || [];
+    const tags = aiResult.tags || ["shorts", "факты", "интересное"];
+    const hashtags = aiResult.hashtags || ["#interesting", "#интересное"];
 
     // Сценарий готов
     progress = createProgress(
@@ -112,6 +114,8 @@ router.post("/generate", async (req, res) => {
         title: aiResult.title,
         scriptText: aiResult.script,
         segments: JSON.stringify(segments),
+        tags: JSON.stringify(tags),
+        hashtags: JSON.stringify(hashtags),
       },
       progress
     );
@@ -839,7 +843,10 @@ router.post("/retry/:id", async (req, res) => {
  * Поиск видео по ключевым словам для ручного выбора фона
  */
 router.get("/search-videos", async (req, res) => {
-  const { q, source = "pexels" } = req.query;
+  const { q, source = "pexels", page = 1, verticalOnly = "true" } = req.query;
+  const pageNum = parseInt(page) || 1;
+  const perPage = 20;
+  const isVerticalOnly = verticalOnly === "true";
 
   if (!q) {
     return res.status(400).json({ error: "Query parameter 'q' is required" });
@@ -848,6 +855,8 @@ router.get("/search-videos", async (req, res) => {
   try {
     const keywords = q.split(",").map((k) => k.trim());
     let videos = [];
+    let totalHits = 0;
+    let hasMore = false;
 
     if (source === "pixabay") {
       // Делаем прямой запрос к Pixabay API чтобы получить список видео
@@ -855,45 +864,47 @@ router.get("/search-videos", async (req, res) => {
       const PIXABAY_API_KEY =
         process.env.PIXABAY_API_KEY || "54210869-6670fd220da2b2c1de7759e59";
 
-      console.log(`[Pixabay Search] Query: ${keywords[0]}`);
+      console.log(
+        `[Pixabay Search] Query: ${keywords[0]}, Page: ${pageNum}, VerticalOnly: ${isVerticalOnly}`
+      );
 
       const response = await axios.get("https://pixabay.com/api/videos/", {
         params: {
           key: PIXABAY_API_KEY,
           q: keywords[0],
-          per_page: 50, // Увеличим чтобы больше шансов найти вертикальные
-          video_type: "all", // Изменим на all чтобы больше результатов
+          per_page: 100, // Запрашиваем много для фильтрации
+          page: pageNum,
+          video_type: "all",
           safesearch: true,
         },
       });
 
+      totalHits = response.data.totalHits || 0;
       console.log(
-        `[Pixabay Search] Found ${response.data.hits?.length || 0} videos`
+        `[Pixabay Search] Found ${
+          response.data.hits?.length || 0
+        } videos, total: ${totalHits}`
       );
 
-      // Сначала пробуем найти вертикальные видео
       let filteredVideos = (response.data.hits || []).filter((v) => {
         const medium = v.videos?.medium;
-        const isVertical = medium && medium.height > medium.width;
         const durationOk = v.duration >= 3 && v.duration <= 60;
-        return isVertical && durationOk;
+
+        if (isVerticalOnly) {
+          const isVertical = medium && medium.height > medium.width;
+          return isVertical && durationOk;
+        }
+        return durationOk;
       });
 
-      console.log(`[Pixabay Search] Vertical videos: ${filteredVideos.length}`);
-
-      // Если вертикальных нет, берем любые подходящие по длительности
-      if (filteredVideos.length === 0) {
-        console.log(`[Pixabay Search] No vertical videos, using all videos`);
-        filteredVideos = (response.data.hits || []).filter((v) => {
-          return v.duration >= 3 && v.duration <= 60;
-        });
-      }
+      console.log(`[Pixabay Search] Filtered videos: ${filteredVideos.length}`);
 
       videos = filteredVideos
-        .slice(0, 12)
+        .slice(0, perPage)
         .map((v) => {
           const videoFile =
             v.videos?.large || v.videos?.medium || v.videos?.small;
+          const isVertical = videoFile && videoFile.height > videoFile.width;
           return {
             id: v.id,
             url: videoFile?.url,
@@ -902,34 +913,46 @@ router.get("/search-videos", async (req, res) => {
             duration: v.duration,
             photographer: v.user,
             thumbnail: v.videos?.tiny?.thumbnail || null,
+            isVertical,
           };
         })
         .filter((v) => v.url);
 
-      console.log(`[Pixabay Search] Final videos: ${videos.length}`);
+      hasMore = filteredVideos.length > perPage || pageNum * 100 < totalHits;
+      console.log(
+        `[Pixabay Search] Final videos: ${videos.length}, hasMore: ${hasMore}`
+      );
     } else {
-      const { searchVideo } = require("../services/pexels.service");
       // Делаем прямой запрос к API чтобы получить список видео
       const axios = require("axios");
       const PEXELS_API_KEY =
         process.env.PEXELS_API_KEY ||
         "js7zzQQH8u0HaLesjtFvn9WOBSpgwH6rXXvtqFSCANXiQQvovLTeTMjO";
 
+      console.log(
+        `[Pexels Search] Query: ${keywords[0]}, Page: ${pageNum}, VerticalOnly: ${isVerticalOnly}`
+      );
+
       const response = await axios.get("https://api.pexels.com/videos/search", {
         headers: { Authorization: PEXELS_API_KEY },
         params: {
           query: keywords[0],
-          orientation: "portrait",
-          per_page: 12,
+          orientation: isVerticalOnly ? "portrait" : undefined,
+          per_page: perPage,
+          page: pageNum,
           size: "medium",
         },
       });
+
+      totalHits = response.data.total_results || 0;
+      hasMore = pageNum * perPage < totalHits;
 
       videos = (response.data.videos || [])
         .filter((v) => v.duration >= 3 && v.duration <= 60)
         .map((v) => {
           const videoFile =
             v.video_files.find((f) => f.height > f.width) || v.video_files[0];
+          const isVertical = videoFile && videoFile.height > videoFile.width;
           return {
             id: v.id,
             url: videoFile?.link,
@@ -938,6 +961,7 @@ router.get("/search-videos", async (req, res) => {
             duration: v.duration,
             photographer: v.user?.name,
             thumbnail: v.image,
+            isVertical,
           };
         })
         .filter((v) => v.url);
@@ -947,6 +971,9 @@ router.get("/search-videos", async (req, res) => {
       success: true,
       source,
       query: q,
+      page: pageNum,
+      hasMore,
+      totalHits,
       videos,
     });
   } catch (error) {
@@ -1021,19 +1048,22 @@ const youtubeService = require("../services/youtube.service");
 router.get("/youtube/status", async (req, res) => {
   try {
     const isAuthenticated = youtubeService.isAuthenticated();
+    console.log("[YouTube Status] isAuthenticated:", isAuthenticated);
 
     if (isAuthenticated) {
       try {
         const channel = await youtubeService.getChannelInfo();
+        console.log("[YouTube Status] channel:", channel);
         res.json({
           authenticated: true,
           channel,
         });
       } catch (error) {
         // Токен невалидный, нужна повторная авторизация
+        console.error("[YouTube Status] getChannelInfo error:", error.message);
         res.json({
           authenticated: false,
-          error: "Token expired or invalid",
+          error: "Token expired or invalid: " + error.message,
         });
       }
     } else {
@@ -1121,6 +1151,7 @@ router.post("/videos/:id/publish", async (req, res) => {
       customTitle,
       customDescription,
       tags = [],
+      categoryId = "24", // Default: Entertainment
     } = req.body;
 
     // Проверяем авторизацию
@@ -1165,12 +1196,26 @@ router.post("/videos/:id/publish", async (req, res) => {
     const description =
       customDescription || `${video.title}\n\n#shorts #youtube #video`;
 
+    // Получаем теги из видео если не переданы
+    let finalTags = tags;
+    if (finalTags.length === 0 && video.tags) {
+      try {
+        finalTags = JSON.parse(video.tags);
+      } catch {
+        finalTags = ["shorts", "факты", "интересное"];
+      }
+    }
+    if (finalTags.length === 0) {
+      finalTags = ["shorts", "video"];
+    }
+
     // Загружаем на YouTube
     const result = await youtubeService.uploadVideo({
       videoPath,
       title: customTitle || video.title,
       description,
-      tags: tags.length > 0 ? tags : ["shorts", "video"],
+      tags: finalTags,
+      categoryId,
       privacyStatus,
     });
 

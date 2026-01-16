@@ -1,6 +1,7 @@
 const { exec } = require("child_process");
 const path = require("path");
 const fs = require("fs").promises;
+const { transcribeWithTimings } = require("./whisper.service");
 
 const AUDIO_DIR = path.join(__dirname, "../../storage/audio");
 
@@ -183,7 +184,7 @@ async function generateSegmentAudio(text, videoId, segmentNumber) {
  * @param {Array} segments - Массив сегментов с text
  * @param {string} videoId - ID видео
  * @param {function} onProgress - Callback для прогресса
- * @returns {Promise<Array>} - Сегменты с добавленными audioPath и audioDuration
+ * @returns {Promise<Array>} - Сегменты с добавленными audioPath, audioDuration и wordTimings
  */
 async function generateSegmentsAudio(segments, videoId, onProgress) {
   const results = [];
@@ -201,10 +202,26 @@ async function generateSegmentsAudio(segments, videoId, onProgress) {
       segment.number
     );
 
+    // Транскрибируем аудио для получения таймингов слов
+    let wordTimings = [];
+    try {
+      const fullAudioPath = path.join(__dirname, "../../", audio.path);
+      wordTimings = await transcribeWithTimings(fullAudioPath);
+      console.log(
+        `[Whisper] Segment ${segment.number}: ${wordTimings.length} words with timings`
+      );
+    } catch (err) {
+      console.error(
+        `[Whisper] Failed for segment ${segment.number}:`,
+        err.message
+      );
+    }
+
     results.push({
       ...segment,
       audioPath: audio.path,
       audioDuration: audio.duration,
+      wordTimings, // Массив: [{word: "привет", start: 0.1, end: 0.5}, ...]
     });
   }
 

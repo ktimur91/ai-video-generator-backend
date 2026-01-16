@@ -55,10 +55,25 @@ async function generateScript(topic) {
     }
   ],
   "outro": "ЭМОЦИОНАЛЬНЫЙ призыв с лайком, подпиской, колокольчиком и комментарием!",
-  "outroKeywords": ["subscribe", "like button", "notification bell"]
+  "outroKeywords": ["subscribe", "like button", "notification bell"],
+  "tags": ["тег1", "тег2", "тег3", "тег4", "тег5"],
+  "hashtags": ["#cats", "#коты", "#кошки", "#смешные"]
 }
 
-Ключевые слова должны быть на АНГЛИЙСКОМ языке для поиска видео на стоках.`;
+ВАЖНО для tags:
+- Генерируй 8-15 тегов на РУССКОМ языке
+- Теги должны быть релевантны контенту
+- Включи популярные теги: shorts, факты, интересное, познавательное
+- Теги помогают в поиске и рекомендациях YouTube
+
+ВАЖНО для hashtags:
+- Генерируй 3-4 тематических хештега для описания видео
+- Хештеги должны быть релевантны теме видео
+- Используй смесь русских и английских хештегов
+- Примеры: если видео о котах → #cats #коты #кошки #смешные
+- Примеры: если видео о космосе → #space #космос #вселенная #звезды
+
+Ключевые слова для searchKeywords должны быть на АНГЛИЙСКОМ языке для поиска видео на стоках.`;
 
   const userPrompt = topic;
 
@@ -102,6 +117,8 @@ async function generateScript(topic) {
         "like button",
         "notification bell",
       ],
+      tags: result.tags || ["shorts", "факты", "интересное"],
+      hashtags: result.hashtags || ["#interesting", "#интересное"],
     };
   } catch (error) {
     console.error("Error generating script:", error);

@@ -14,6 +14,7 @@ const {
   findVideosForSegments: findVideosForSegmentsPixabay,
   searchSingleVideo: searchSingleVideoPixabay,
 } = require("../services/pixabay.service");
+const { searchVideo: searchKlipyVideo } = require("../services/klipy.service");
 const { getRandomBackgroundMusic } = require("../services/music.service");
 
 const router = express.Router();
@@ -80,15 +81,28 @@ router.post("/generate", async (req, res) => {
   }
 
   // Выбираем функции поиска в зависимости от источника
-  const findVideosForSegments =
-    videoSource === "pixabay"
-      ? findVideosForSegmentsPixabay
-      : findVideosForSegmentsPexels;
+  let findVideosForSegments;
+  let searchSingleVideo;
 
-  const searchSingleVideo =
-    videoSource === "pixabay"
-      ? searchSingleVideoPixabay
-      : searchSingleVideoPexels;
+  if (videoSource === "pixabay") {
+    findVideosForSegments = findVideosForSegmentsPixabay;
+    searchSingleVideo = searchSingleVideoPixabay;
+  } else if (videoSource === "klipy") {
+    // Для Klipy используем обёртку, т.к. у него другой API
+    findVideosForSegments = async (segments) => {
+      const results = [];
+      for (const segment of segments) {
+        let video = await searchKlipyVideo(segment.searchKeywords || []);
+        results.push({ ...segment, stockVideo: video });
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+      return results;
+    };
+    searchSingleVideo = searchKlipyVideo;
+  } else {
+    findVideosForSegments = findVideosForSegmentsPexels;
+    searchSingleVideo = searchSingleVideoPexels;
+  }
 
   console.log(`[VideoSource] Using ${videoSource} for video search`);
 
@@ -1162,7 +1176,13 @@ router.post("/retry/:id", async (req, res) => {
  * Поиск видео по ключевым словам для ручного выбора фона
  */
 router.get("/search-videos", async (req, res) => {
-  const { q, source = "pexels", page = 1, verticalOnly = "true" } = req.query;
+  const {
+    q,
+    source = "pexels",
+    page = 1,
+    verticalOnly = "true",
+    pos = null,
+  } = req.query;
   const pageNum = parseInt(page) || 1;
   const perPage = 20;
   const isVerticalOnly = verticalOnly === "true";
@@ -1176,6 +1196,7 @@ router.get("/search-videos", async (req, res) => {
     let videos = [];
     let totalHits = 0;
     let hasMore = false;
+    let nextPos = null; // Для cursor-based пагинации (Klipy)
 
     if (source === "pixabay") {
       // Делаем прямой запрос к Pixabay API чтобы получить список видео
@@ -1241,8 +1262,28 @@ router.get("/search-videos", async (req, res) => {
       console.log(
         `[Pixabay Search] Final videos: ${videos.length}, hasMore: ${hasMore}`
       );
+    } else if (source === "klipy") {
+      // Klipy API для клипов (cursor-based pagination)
+      const { searchClips } = require("../services/klipy.service");
+
+      console.log(
+        `[Klipy Search] Query: ${keywords[0]}, Page: ${pageNum}, Pos: ${
+          pos || "none"
+        }`
+      );
+
+      const result = await searchClips(keywords[0], {
+        page: pageNum,
+        limit: perPage,
+        pos: pos, // cursor для пагинации
+      });
+
+      videos = result.videos;
+      hasMore = result.hasMore;
+      totalHits = videos.length;
+      nextPos = result.nextPos; // Сохраняем cursor для следующей страницы
     } else {
-      // Делаем прямой запрос к API чтобы получить список видео
+      // Pexels - делаем прямой запрос к API чтобы получить список видео
       const axios = require("axios");
       const PEXELS_API_KEY =
         process.env.PEXELS_API_KEY ||
@@ -1294,6 +1335,7 @@ router.get("/search-videos", async (req, res) => {
       hasMore,
       totalHits,
       videos,
+      ...(nextPos && { nextPos }), // Cursor для следующей страницы (Klipy)
     });
   } catch (error) {
     console.error("Error searching videos:", error);

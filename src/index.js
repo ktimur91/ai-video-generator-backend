@@ -4,6 +4,7 @@ const express = require("express");
 const cors = require("cors");
 const path = require("path");
 const videosRoutes = require("./routes/videos.routes");
+const voicesRoutes = require("./routes/voices.routes");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -18,6 +19,7 @@ app.use("/storage", express.static(path.join(__dirname, "../storage")));
 
 // Routes
 app.use("/api", videosRoutes);
+app.use("/api/voices", voicesRoutes);
 
 // Health check
 app.get("/health", (req, res) => {

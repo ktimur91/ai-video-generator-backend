@@ -13,6 +13,10 @@ storage/audio/*
 !storage/audio/.gitkeep
 storage/videos/*
 !storage/videos/.gitkeep
+storage/voice-previews/*
+!storage/voice-previews/.gitkeep
+storage/background-musics/*
+!storage/background-musics/.gitkeep
 
 # Logs
 *.log

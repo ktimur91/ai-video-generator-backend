@@ -178,10 +178,21 @@ function applyPronunciationFixes(text) {
  * Генерирует аудио файл из текста с помощью Edge TTS CLI (Python)
  * @param {string} text - Текст для озвучивания
  * @param {string} videoId - ID видео для именования файла
+ * @param {object} voiceConfig - Настройки голоса (опционально)
  * @returns {Promise<{path: string, duration: number}>} - Путь и длительность аудио
  */
-async function generateAudio(text, videoId) {
-  const voice = process.env.TTS_VOICE || "ru-RU-DmitryNeural";
+async function generateAudio(text, videoId, voiceConfig = null) {
+  // Используем настройки из конфига или дефолтные значения
+  const voice =
+    voiceConfig?.voice || process.env.TTS_VOICE || "ru-RU-DmitryNeural";
+  const rate = voiceConfig?.rate || "+25%";
+  const pitch = voiceConfig?.pitch || "+5Hz";
+  const volume = voiceConfig?.volume || "+0%";
+
+  console.log(
+    `[TTS] Using voice: ${voice}, rate: ${rate}, pitch: ${pitch}, volume: ${volume}`
+  );
+
   const filename = `${videoId}.mp3`;
   const outputPath = path.join(AUDIO_DIR, filename);
 
@@ -204,8 +215,13 @@ async function generateAudio(text, videoId) {
   await fs.writeFile(textFilePath, cleanText, "utf-8");
 
   return new Promise((resolve, reject) => {
-    // Добавляем --rate для ускорения речи и --pitch для энергичности
-    const command = `"${EDGE_TTS_PATH}" --voice "${voice}" --rate="+25%" --pitch="+5Hz" --file "${textFilePath}" --write-media "${outputPath}"`;
+    // Формируем команду с параметрами из конфига
+    const rateParam = rate ? `--rate="${rate}"` : "";
+    const pitchParam = pitch ? `--pitch="${pitch}"` : "";
+    const volumeParam =
+      volume && volume !== "+0%" ? `--volume="${volume}"` : "";
+
+    const command = `"${EDGE_TTS_PATH}" --voice "${voice}" ${rateParam} ${pitchParam} ${volumeParam} --file "${textFilePath}" --write-media "${outputPath}"`;
 
     console.log("Executing TTS command:", command);
 

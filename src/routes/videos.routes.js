@@ -341,7 +341,11 @@ router.post("/generate", async (req, res) => {
  */
 router.post("/approve/:id", async (req, res) => {
   const { id } = req.params;
-  const { segments: updatedSegments, backgroundMusicFilename } = req.body;
+  const {
+    segments: updatedSegments,
+    backgroundMusicFilename,
+    voiceConfigId,
+  } = req.body;
 
   try {
     const video = await prisma.video.findUnique({ where: { id } });
@@ -367,11 +371,32 @@ router.post("/approve/:id", async (req, res) => {
       ? JSON.parse(video.segments)
       : video.segments;
 
-    // Обновляем backgroundMusicFilename если передан
+    // Обновляем backgroundMusicFilename и voiceConfigId если переданы
+    const updateData = {};
     if (backgroundMusicFilename !== undefined) {
+      updateData.backgroundMusicFilename = backgroundMusicFilename || null;
+    }
+    if (voiceConfigId !== undefined) {
+      updateData.voiceConfigId = voiceConfigId || null;
+    }
+    if (Object.keys(updateData).length > 0) {
       await prisma.video.update({
         where: { id },
-        data: { backgroundMusicFilename: backgroundMusicFilename || null },
+        data: updateData,
+      });
+    }
+
+    // Получаем настройки голоса если указан voiceConfigId
+    let voiceConfig = null;
+    if (voiceConfigId) {
+      voiceConfig = await prisma.voiceConfig.findUnique({
+        where: { id: voiceConfigId },
+      });
+    }
+    // Если голос не указан, пробуем найти голос по умолчанию
+    if (!voiceConfig) {
+      voiceConfig = await prisma.voiceConfig.findFirst({
+        where: { isDefault: true },
       });
     }
 
@@ -428,7 +453,8 @@ router.post("/approve/:id", async (req, res) => {
           ? `${video.id}_outro`
           : `${video.id}_segment_${segment.number || i}`;
 
-      const audio = await generateAudio(segment.text, segmentId);
+      // Передаём настройки голоса в generateAudio
+      const audio = await generateAudio(segment.text, segmentId, voiceConfig);
       segments[i].audioPath = audio.path;
       segments[i].audioDuration = audio.duration;
 

@@ -38,6 +38,21 @@ model Video {
   youtubeUrl         String?     // URL видео на YouTube
   youtubeStatus      String?     // Статус: private, public, unlisted
   publishedAt        DateTime?   // Дата публикации
+  
+  // Настройки голоса
+  voiceConfigId      String?     // ID выбранного голоса
 
   createdAt          DateTime    @default(now())
+}
+
+model VoiceConfig {
+  id        String   @id @default(uuid())
+  name      String   // Название конфига (например "Энергичный Дмитрий")
+  voice     String   // Edge TTS voice ID (например "ru-RU-DmitryNeural")
+  rate      String   @default("+0%")   // Скорость речи: -50% to +100%
+  pitch     String   @default("+0Hz")  // Высота голоса: -50Hz to +50Hz
+  volume    String   @default("+0%")   // Громкость: -50% to +50%
+  isDefault Boolean  @default(false)   // Основной голос
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

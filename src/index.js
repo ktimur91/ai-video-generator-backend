@@ -17,7 +17,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/storage", express.static(path.join(__dirname, "../storage")));
 
 // Routes
-app.use("/", videosRoutes);
+app.use("/api", videosRoutes);
 
 // Health check
 app.get("/health", (req, res) => {

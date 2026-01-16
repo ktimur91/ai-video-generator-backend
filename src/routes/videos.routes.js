@@ -1008,4 +1008,194 @@ router.patch("/videos/:id/segments", async (req, res) => {
   }
 });
 
+// ============================================================
+// YOUTUBE API ROUTES
+// ============================================================
+
+const youtubeService = require("../services/youtube.service");
+
+/**
+ * GET /youtube/status
+ * Проверка статуса авторизации YouTube
+ */
+router.get("/youtube/status", async (req, res) => {
+  try {
+    const isAuthenticated = youtubeService.isAuthenticated();
+
+    if (isAuthenticated) {
+      try {
+        const channel = await youtubeService.getChannelInfo();
+        res.json({
+          authenticated: true,
+          channel,
+        });
+      } catch (error) {
+        // Токен невалидный, нужна повторная авторизация
+        res.json({
+          authenticated: false,
+          error: "Token expired or invalid",
+        });
+      }
+    } else {
+      res.json({
+        authenticated: false,
+      });
+    }
+  } catch (error) {
+    res.status(500).json({
+      error: "Failed to check YouTube status",
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * GET /youtube/auth
+ * Получение URL для авторизации YouTube
+ */
+router.get("/youtube/auth", (req, res) => {
+  try {
+    const authUrl = youtubeService.getAuthUrl();
+    res.json({ authUrl });
+  } catch (error) {
+    res.status(500).json({
+      error: "Failed to generate auth URL",
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * GET /youtube/callback
+ * OAuth2 callback от Google
+ */
+router.get("/youtube/callback", async (req, res) => {
+  try {
+    const { code, error } = req.query;
+
+    if (error) {
+      return res.redirect(`http://localhost:5173?youtube_error=${error}`);
+    }
+
+    if (!code) {
+      return res.redirect(`http://localhost:5173?youtube_error=no_code`);
+    }
+
+    await youtubeService.handleAuthCallback(code);
+
+    // Редирект обратно на дашборд с успехом
+    res.redirect(`http://localhost:5173?youtube_connected=true`);
+  } catch (error) {
+    console.error("YouTube OAuth callback error:", error);
+    res.redirect(
+      `http://localhost:5173?youtube_error=${encodeURIComponent(error.message)}`
+    );
+  }
+});
+
+/**
+ * POST /youtube/logout
+ * Выход из YouTube аккаунта
+ */
+router.post("/youtube/logout", (req, res) => {
+  try {
+    youtubeService.logout();
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({
+      error: "Failed to logout",
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * POST /videos/:id/publish
+ * Публикация видео на YouTube
+ */
+router.post("/videos/:id/publish", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      privacyStatus = "private", // private, public, unlisted
+      customTitle,
+      customDescription,
+      tags = [],
+    } = req.body;
+
+    // Проверяем авторизацию
+    if (!youtubeService.isAuthenticated()) {
+      return res.status(401).json({
+        error: "YouTube not authenticated",
+        message: "Please connect your YouTube account first",
+      });
+    }
+
+    // Получаем видео из БД
+    const video = await prisma.video.findUnique({
+      where: { id },
+    });
+
+    if (!video) {
+      return res.status(404).json({ error: "Video not found" });
+    }
+
+    if (!video.videoPath) {
+      return res.status(400).json({
+        error: "Video not rendered",
+        message: "Please wait for video rendering to complete",
+      });
+    }
+
+    // Проверяем что файл существует
+    const fs = require("fs");
+    const path = require("path");
+    const videoPath = path.isAbsolute(video.videoPath)
+      ? video.videoPath
+      : path.join(__dirname, "../../", video.videoPath);
+
+    if (!fs.existsSync(videoPath)) {
+      return res.status(400).json({
+        error: "Video file not found",
+        message: "The rendered video file is missing",
+      });
+    }
+
+    // Формируем описание
+    const description =
+      customDescription || `${video.title}\n\n#shorts #youtube #video`;
+
+    // Загружаем на YouTube
+    const result = await youtubeService.uploadVideo({
+      videoPath,
+      title: customTitle || video.title,
+      description,
+      tags: tags.length > 0 ? tags : ["shorts", "video"],
+      privacyStatus,
+    });
+
+    // Обновляем запись в БД
+    await prisma.video.update({
+      where: { id },
+      data: {
+        youtubeId: result.id,
+        youtubeUrl: result.url,
+        youtubeStatus: privacyStatus,
+        publishedAt: new Date(),
+      },
+    });
+
+    res.json({
+      success: true,
+      youtube: result,
+    });
+  } catch (error) {
+    console.error("YouTube publish error:", error);
+    res.status(500).json({
+      error: "Failed to publish video",
+      message: error.message,
+    });
+  }
+});
+
 module.exports = router;

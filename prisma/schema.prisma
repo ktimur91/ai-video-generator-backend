@@ -13,23 +13,25 @@ datasource db {
 enum VideoStatus {
   PENDING
   GENERATING_ASSETS
+  AWAITING_REVIEW
   RENDERING
   COMPLETED
   FAILED
 }
 
 model Video {
-  id                 String      @id @default(uuid())
-  status             VideoStatus @default(PENDING)
-  title              String
-  scriptText         String
-  audioPath          String?     // Для совместимости, основные аудио в segments
-  videoPath          String?
-  segments           String?     // JSON массив сегментов: [{text, keywords, audioPath, audioDuration, stockVideoUrl}]
-  progress           String?     // JSON с детальным прогрессом
-  backgroundMusicUrl String?     // URL глобальной фоновой музыки
-  tags               String?     // JSON массив тегов для YouTube
-  hashtags           String?     // JSON массив хештегов для описания (#cats #коты)
+  id                      String      @id @default(uuid())
+  status                  VideoStatus @default(PENDING)
+  title                   String
+  scriptText              String
+  audioPath               String?     // Для совместимости, основные аудио в segments
+  videoPath               String?
+  segments                String?     // JSON массив сегментов: [{text, keywords, audioPath, audioDuration, stockVideoUrl}]
+  progress                String?     // JSON с детальным прогрессом
+  backgroundMusicUrl      String?     // URL глобальной фоновой музыки
+  backgroundMusicFilename String?     // Имя файла фоновой музыки
+  tags                    String?     // JSON массив тегов для YouTube
+  hashtags                String?     // JSON массив хештегов для описания (#cats #коты)
   
   // YouTube публикация
   youtubeId          String?     // ID видео на YouTube

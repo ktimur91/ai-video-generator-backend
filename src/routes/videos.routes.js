@@ -34,18 +34,23 @@ const startGeneration = (videoId) => activeGenerations.set(videoId, false);
 // Очищает запись после завершения
 const cleanupGeneration = (videoId) => activeGenerations.delete(videoId);
 
-// Расширенный хелпер для создания объекта прогресса (5 шагов)
+// Расширенный хелпер для создания объекта прогресса (5 шагов - НОВЫЙ ПОРЯДОК)
+// 1. generateScript - AI генерирует текст
+// 2. searchVideos - Подбор видео + музыки
+// 3. awaitingReview - Ожидание ручной проверки
+// 4. generateAudio - Генерация озвучки после одобрения
+// 5. renderVideo - Рендеринг
 const createProgress = (
   generateScript = "waiting",
   searchVideos = "waiting",
+  awaitingReview = "waiting",
   generateAudio = "waiting",
-  processSegments = "waiting",
   renderVideo = "waiting"
 ) => ({
   generateScript,
   searchVideos,
+  awaitingReview,
   generateAudio,
-  processSegments,
   renderVideo,
 });
 
@@ -62,7 +67,10 @@ const updateVideoProgress = async (videoId, data, progress) => {
 
 /**
  * POST /generate
- * Запускает цепочку генерации: AI -> Pexels/Pixabay -> Voice -> Сохранение в БД
+ * НОВЫЙ ФЛОУ:
+ * 1. AI генерирует текст (интро, сегменты, аутро) - без аудио
+ * 2. Подбор видео фонов + выбор фоновой музыки
+ * 3. Останавливается на статусе AWAITING_REVIEW для ручной проверки
  */
 router.post("/generate", async (req, res) => {
   const { topic, videoSource = "pexels" } = req.body;
@@ -103,7 +111,7 @@ router.post("/generate", async (req, res) => {
     // Начинаем отслеживание генерации
     startGeneration(video.id);
 
-    // Шаг 1: Генерируем сценарий через AI (с сегментами)
+    // ========== ШАГ 1: AI генерирует текст ==========
     console.log("Step 1: Generating script with segments...");
     progress = createProgress(
       "pending",
@@ -125,9 +133,35 @@ router.post("/generate", async (req, res) => {
     }
 
     const aiResult = await generateScript(topic);
-    let segments = aiResult.segments || [];
     const tags = aiResult.tags || ["shorts", "факты", "интересное"];
     const hashtags = aiResult.hashtags || ["#interesting", "#интересное"];
+
+    // Формируем сегменты БЕЗ аудио (аудио будет генерироваться после одобрения)
+    let segments = [
+      {
+        type: "intro",
+        text: aiResult.intro,
+        searchKeywords: aiResult.introKeywords || [
+          "energy",
+          "dynamic",
+          "action",
+        ],
+      },
+      ...(aiResult.segments || []).map((s, idx) => ({
+        ...s,
+        type: "fact",
+        number: idx + 1,
+      })),
+      {
+        type: "outro",
+        text: aiResult.outro,
+        searchKeywords: aiResult.outroKeywords || [
+          "subscribe",
+          "like button",
+          "notification bell",
+        ],
+      },
+    ];
 
     // Проверка остановки после шага 1
     if (isGenerationAborted(video.id)) {
@@ -151,7 +185,7 @@ router.post("/generate", async (req, res) => {
       });
     }
 
-    // Сценарий готов
+    // Сценарий готов, переходим к поиску видео
     progress = createProgress(
       "success",
       "pending",
@@ -171,16 +205,40 @@ router.post("/generate", async (req, res) => {
       progress
     );
 
-    // Шаг 2: Ищем стоковые видео для каждого сегмента
+    // ========== ШАГ 2: Подбор видео фонов + музыки ==========
     console.log(`Step 2: Searching stock videos on ${videoSource}...`);
-    segments = await findVideosForSegments(segments);
+
+    // Ищем видео для каждого сегмента
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i];
+      const keywords = segment.searchKeywords || [];
+
+      if (keywords.length > 0) {
+        console.log(
+          `[Segment ${i}] Searching video with keywords: ${keywords.join(", ")}`
+        );
+        const stockVideo = await searchSingleVideo(keywords, segment.type);
+        segments[i].stockVideo = stockVideo;
+      }
+    }
+
+    // Получаем рандомную фоновую музыку
+    const bgMusic = await getRandomBackgroundMusic();
+    if (bgMusic) {
+      console.log(`[Music] Using background music: ${bgMusic.filename}`);
+    }
 
     // Проверка остановки после шага 2
     if (isGenerationAborted(video.id)) {
       cleanupGeneration(video.id);
       await updateVideoProgress(
         video.id,
-        { segments: JSON.stringify(segments), status: "PENDING" },
+        {
+          segments: JSON.stringify(segments),
+          backgroundMusicUrl: bgMusic?.url || null,
+          backgroundMusicFilename: bgMusic?.filename || null,
+          status: "PENDING",
+        },
         createProgress("success", "success", "waiting", "waiting", "waiting")
       );
       return res.json({
@@ -190,6 +248,8 @@ router.post("/generate", async (req, res) => {
       });
     }
 
+    // ========== ШАГ 3: Ожидание ручной проверки ==========
+    // Останавливаемся здесь и ждём одобрения пользователя
     progress = createProgress(
       "success",
       "success",
@@ -197,122 +257,14 @@ router.post("/generate", async (req, res) => {
       "waiting",
       "waiting"
     );
-    video = await updateVideoProgress(
-      video.id,
-      { segments: JSON.stringify(segments) },
-      progress
-    );
 
-    // Шаг 3: Генерируем аудио для каждого сегмента
-    console.log("Step 3: Generating audio for segments...");
-    segments = await generateSegmentsAudio(segments, video.id);
-
-    // Проверка остановки после шага 3
-    if (isGenerationAborted(video.id)) {
-      cleanupGeneration(video.id);
-      await updateVideoProgress(
-        video.id,
-        { segments: JSON.stringify(segments), status: "PENDING" },
-        createProgress("success", "success", "success", "waiting", "waiting")
-      );
-      return res.json({
-        success: true,
-        message: "Generation stopped by user",
-        stopped: true,
-      });
-    }
-
-    progress = createProgress(
-      "success",
-      "success",
-      "success",
-      "pending",
-      "waiting"
-    );
-    video = await updateVideoProgress(
-      video.id,
-      { segments: JSON.stringify(segments) },
-      progress
-    );
-
-    // Шаг 4: Генерируем общее аудио для intro/outro и ищем видео для них
-    console.log("Step 4: Processing segments...");
-
-    // Ищем видео для intro и outro из выбранного источника
-    const introKeywords = aiResult.introKeywords || [
-      "energy",
-      "dynamic",
-      "action",
-    ];
-    const outroKeywords = aiResult.outroKeywords || [
-      "subscribe",
-      "like button",
-      "notification bell",
-    ];
-
-    console.log(
-      `[Intro] Searching video with keywords: ${introKeywords.join(", ")}`
-    );
-    const introVideo = await searchSingleVideo(introKeywords, "intro");
-
-    console.log(
-      `[Outro] Searching video with keywords: ${outroKeywords.join(", ")}`
-    );
-    const outroVideo = await searchSingleVideo(outroKeywords, "outro");
-
-    // Получаем рандомную фоновую музыку (будет глобальной для всего видео)
-    const bgMusic = await getRandomBackgroundMusic();
-    if (bgMusic) {
-      console.log(`[Music] Using background music: ${bgMusic.filename}`);
-    }
-
-    // Генерируем аудио для intro и outro (теперь возвращает {path, duration})
-    const introAudio = await generateAudio(
-      aiResult.intro || "Привет!",
-      `${video.id}_intro`
-    );
-    const outroAudio = await generateAudio(
-      aiResult.outro || "Подписывайся!",
-      `${video.id}_outro`
-    );
-
-    // Собираем все сегменты
-    // Фоновая музыка теперь будет глобальной (передаётся на уровне видео, не сегментов)
-    const fullSegments = [
-      {
-        type: "intro",
-        text: aiResult.intro,
-        audioPath: introAudio.path,
-        audioDuration: introAudio.duration, // Длительность для синхронизации видео
-        stockVideo: introVideo, // Видео из выбранного источника
-      },
-      ...segments.map((s) => ({
-        ...s,
-        type: "fact",
-      })),
-      {
-        type: "outro",
-        text: aiResult.outro,
-        audioPath: outroAudio.path,
-        audioDuration: outroAudio.duration, // Длительность для синхронизации видео
-        stockVideo: outroVideo, // Видео из выбранного источника
-      },
-    ];
-
-    // Сохраняем URL фоновой музыки отдельно для глобального использования
     const videoData = {
-      segments: JSON.stringify(fullSegments),
-      backgroundMusicUrl: bgMusic?.url || null, // Глобальная фоновая музыка
-      status: "PENDING",
+      segments: JSON.stringify(segments),
+      backgroundMusicUrl: bgMusic?.url || null,
+      backgroundMusicFilename: bgMusic?.filename || null,
+      status: "AWAITING_REVIEW", // Новый статус!
     };
 
-    progress = createProgress(
-      "success",
-      "success",
-      "success",
-      "success",
-      "waiting"
-    );
     video = await updateVideoProgress(video.id, videoData, progress);
 
     // Очищаем отслеживание генерации
@@ -320,11 +272,12 @@ router.post("/generate", async (req, res) => {
 
     res.json({
       success: true,
-      message: "Assets generated successfully",
+      message: "Ready for review. Please check text and video backgrounds.",
+      awaitingReview: true,
       video: {
         ...video,
         progress: JSON.parse(video.progress),
-        segments: fullSegments,
+        segments: segments,
       },
     });
   } catch (error) {
@@ -332,19 +285,17 @@ router.post("/generate", async (req, res) => {
 
     // Если есть video.id, обновляем статус на FAILED с текущим прогрессом
     if (video?.id) {
-      // Определяем на каком шаге произошла ошибка
       const failedProgress = {
         ...progress,
-        // Помечаем текущий pending шаг как failed
         ...(progress.generateScript === "pending" && {
           generateScript: "failed",
         }),
         ...(progress.searchVideos === "pending" && { searchVideos: "failed" }),
+        ...(progress.awaitingReview === "pending" && {
+          awaitingReview: "failed",
+        }),
         ...(progress.generateAudio === "pending" && {
           generateAudio: "failed",
-        }),
-        ...(progress.processSegments === "pending" && {
-          processSegments: "failed",
         }),
         ...(progress.renderVideo === "pending" && { renderVideo: "failed" }),
       };
@@ -359,7 +310,6 @@ router.post("/generate", async (req, res) => {
         })
         .catch(console.error);
 
-      // Очищаем отслеживание генерации
       cleanupGeneration(video.id);
     }
 
@@ -367,6 +317,163 @@ router.post("/generate", async (req, res) => {
       error: "Generation failed",
       message: error.message,
       progress,
+    });
+  }
+});
+
+/**
+ * POST /approve/:id
+ * Одобряет видео после ручной проверки и запускает генерацию аудио
+ */
+router.post("/approve/:id", async (req, res) => {
+  const { id } = req.params;
+  const { segments: updatedSegments, backgroundMusicFilename } = req.body;
+
+  try {
+    const video = await prisma.video.findUnique({ where: { id } });
+
+    if (!video) {
+      return res.status(404).json({ error: "Video not found" });
+    }
+
+    if (video.status !== "AWAITING_REVIEW" && video.status !== "PENDING") {
+      return res.status(400).json({
+        error: "Video is not awaiting review",
+        currentStatus: video.status,
+      });
+    }
+
+    // Если переданы обновленные сегменты, используем их
+    // Иначе берем из базы
+    let segments = updatedSegments
+      ? typeof updatedSegments === "string"
+        ? JSON.parse(updatedSegments)
+        : updatedSegments
+      : typeof video.segments === "string"
+      ? JSON.parse(video.segments)
+      : video.segments;
+
+    // Обновляем backgroundMusicFilename если передан
+    if (backgroundMusicFilename !== undefined) {
+      await prisma.video.update({
+        where: { id },
+        data: { backgroundMusicFilename: backgroundMusicFilename || null },
+      });
+    }
+
+    // Начинаем отслеживание генерации
+    startGeneration(video.id);
+
+    // ========== ШАГ 4: Генерация аудио ==========
+    console.log("Step 4: Generating audio for all segments...");
+    let progress = createProgress(
+      "success",
+      "success",
+      "success",
+      "pending",
+      "waiting"
+    );
+    await updateVideoProgress(
+      video.id,
+      { status: "GENERATING_ASSETS" },
+      progress
+    );
+
+    // Генерируем аудио для каждого сегмента
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i];
+
+      // Проверка остановки
+      if (isGenerationAborted(video.id)) {
+        cleanupGeneration(video.id);
+        await updateVideoProgress(
+          video.id,
+          {
+            segments: JSON.stringify(segments),
+            status: "PENDING",
+          },
+          createProgress("success", "success", "success", "waiting", "waiting")
+        );
+        return res.json({
+          success: true,
+          message: "Generation stopped by user",
+          stopped: true,
+        });
+      }
+
+      console.log(
+        `[Audio] Generating for segment ${i + 1}/${segments.length}: ${
+          segment.type
+        }`
+      );
+
+      const segmentId =
+        segment.type === "intro"
+          ? `${video.id}_intro`
+          : segment.type === "outro"
+          ? `${video.id}_outro`
+          : `${video.id}_segment_${segment.number || i}`;
+
+      const audio = await generateAudio(segment.text, segmentId);
+      segments[i].audioPath = audio.path;
+      segments[i].audioDuration = audio.duration;
+
+      // Транскрибируем для получения таймингов слов (для субтитров)
+      try {
+        const {
+          transcribeWithTimings,
+        } = require("../services/whisper.service");
+        const path = require("path");
+        const fullAudioPath = path.join(__dirname, "../../", audio.path);
+        const wordTimings = await transcribeWithTimings(fullAudioPath);
+        segments[i].wordTimings = wordTimings;
+        console.log(
+          `[Whisper] Segment ${i + 1}: ${wordTimings.length} words with timings`
+        );
+      } catch (err) {
+        console.error(`[Whisper] Failed for segment ${i + 1}:`, err.message);
+        segments[i].wordTimings = [];
+      }
+    }
+
+    // Аудио готово, можно рендерить
+    progress = createProgress(
+      "success",
+      "success",
+      "success",
+      "success",
+      "waiting"
+    );
+    await updateVideoProgress(
+      video.id,
+      {
+        segments: JSON.stringify(segments),
+        status: "PENDING",
+      },
+      progress
+    );
+
+    cleanupGeneration(video.id);
+
+    res.json({
+      success: true,
+      message: "Audio generated successfully. Ready for rendering.",
+      video: {
+        ...video,
+        segments,
+        progress,
+        status: "PENDING",
+        backgroundMusicFilename:
+          backgroundMusicFilename !== undefined
+            ? backgroundMusicFilename || null
+            : video.backgroundMusicFilename,
+      },
+    });
+  } catch (error) {
+    console.error("Approve/Audio generation error:", error);
+    res.status(500).json({
+      error: "Audio generation failed",
+      message: error.message,
     });
   }
 });
@@ -402,11 +509,11 @@ router.post("/stop/:id", async (req, res) => {
       ...(currentProgress.searchVideos === "pending" && {
         searchVideos: "waiting",
       }),
+      ...(currentProgress.awaitingReview === "pending" && {
+        awaitingReview: "waiting",
+      }),
       ...(currentProgress.generateAudio === "pending" && {
         generateAudio: "waiting",
-      }),
-      ...(currentProgress.processSegments === "pending" && {
-        processSegments: "waiting",
       }),
       ...(currentProgress.renderVideo === "pending" && {
         renderVideo: "waiting",
@@ -432,6 +539,65 @@ router.post("/stop/:id", async (req, res) => {
     console.error("Stop error:", error);
     res.status(500).json({
       error: "Failed to stop generation",
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * GET /background-music
+ * Получает список доступной фоновой музыки
+ */
+router.get("/background-music", async (req, res) => {
+  try {
+    const { getAvailableMusic } = require("../services/music.service");
+    const tracks = await getAvailableMusic();
+    const backendUrl = process.env.BACKEND_URL || "http://localhost:3001";
+
+    const musicList = tracks.map((filename) => ({
+      filename,
+      url: `${backendUrl}/storage/background-musics/${filename}`,
+      name: filename.replace(/\.[^.]+$/, "").replace(/_/g, " "),
+    }));
+
+    res.json({
+      success: true,
+      music: musicList,
+    });
+  } catch (error) {
+    console.error("Error getting background music:", error);
+    res.status(500).json({
+      error: "Failed to get background music",
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * PATCH /videos/:id/background-music
+ * Обновляет фоновую музыку для видео
+ */
+router.patch("/videos/:id/background-music", async (req, res) => {
+  const { id } = req.params;
+  const { backgroundMusicUrl, backgroundMusicFilename } = req.body;
+
+  try {
+    const video = await prisma.video.update({
+      where: { id },
+      data: {
+        backgroundMusicUrl,
+        backgroundMusicFilename,
+      },
+    });
+
+    res.json({
+      success: true,
+      video,
+    });
+  } catch (error) {
+    console.error("Error updating background music:", error);
+    res.status(500).json({
+      error: "Failed to update background music",
       message: error.message,
     });
   }

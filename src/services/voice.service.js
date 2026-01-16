@@ -9,6 +9,172 @@ const AUDIO_DIR = path.join(__dirname, "../../storage/audio");
 const EDGE_TTS_PATH = "/Users/apple/Library/Python/3.9/bin/edge-tts";
 
 /**
+ * Словарь замен английских слов на фонетическую транскрипцию для русского TTS
+ * Ключ - регулярное выражение (case-insensitive), значение - произношение
+ */
+const PRONUNCIATION_DICT = {
+  // Языки программирования
+  Python: "Пайтон",
+  JavaScript: "ДжаваСкрипт",
+  TypeScript: "ТайпСкрипт",
+  Java: "Джава",
+  "C\\+\\+": "Си плюс плюс",
+  "C#": "Си шарп",
+  Ruby: "Руби",
+  Rust: "Раст",
+  "Go(?:lang)?": "Гоу",
+  Swift: "Свифт",
+  Kotlin: "Котлин",
+  Scala: "Скала",
+  PHP: "Пи Эйч Пи",
+  SQL: "Эс Кью Эль",
+  HTML: "Эйч Ти Эм Эль",
+  CSS: "Си Эс Эс",
+  React: "Риэкт",
+  Vue: "Вью",
+  Angular: "Ангуляр",
+  "Node\\.?js": "Ноуд Джей Эс",
+  Express: "Экспресс",
+  Django: "Джанго",
+  Flask: "Фласк",
+  Laravel: "Ларавел",
+  Spring: "Спринг",
+
+  // Технологии и компании
+  API: "Эй Пи Ай",
+  REST: "Рест",
+  GraphQL: "Граф Кью Эль",
+  Docker: "Докер",
+  Kubernetes: "Кубернетис",
+  AWS: "Эй Дабл Ю Эс",
+  Azure: "Эжур",
+  Google: "Гугл",
+  GitHub: "ГитХаб",
+  GitLab: "ГитЛаб",
+  Linux: "Линукс",
+  Windows: "Виндоус",
+  macOS: "Мак О Эс",
+  iOS: "Ай О Эс",
+  Android: "Андроид",
+  Chrome: "Хром",
+  Firefox: "Файрфокс",
+  Safari: "Сафари",
+  Edge: "Эдж",
+  Microsoft: "Майкрософт",
+  Apple: "Эпл",
+  Amazon: "Амазон",
+  Netflix: "Нетфликс",
+  Spotify: "Спотифай",
+  Tesla: "Тесла",
+  SpaceX: "Спейс Икс",
+  NASA: "НАСА",
+  OpenAI: "Оупен Эй Ай",
+  ChatGPT: "Чат Джи Пи Ти",
+  GPT: "Джи Пи Ти",
+  AI: "Ай Ай",
+  ML: "Эм Эль",
+  "Deep Learning": "Дип Лёрнинг",
+  "Machine Learning": "Машин Лёрнинг",
+  Blockchain: "Блокчейн",
+  Bitcoin: "Биткоин",
+  Ethereum: "Эфириум",
+  NFT: "Эн Эф Ти",
+  VR: "Ви Ар",
+  AR: "Эй Ар",
+
+  // Социальные сети
+  YouTube: "Ютуб",
+  TikTok: "ТикТок",
+  Instagram: "Инстаграм",
+  Facebook: "Фейсбук",
+  Twitter: "Твиттер",
+  LinkedIn: "ЛинкедИн",
+  WhatsApp: "Вотсап",
+  Telegram: "Телеграм",
+  Discord: "Дискорд",
+  Twitch: "Твич",
+  Reddit: "Реддит",
+  Pinterest: "Пинтерест",
+  Snapchat: "Снэпчат",
+
+  // Общие английские слова
+  online: "онлайн",
+  offline: "офлайн",
+  startup: "стартап",
+  smartphone: "смартфон",
+  laptop: "ноутбук",
+  software: "софтвер",
+  hardware: "хардвер",
+  update: "апдейт",
+  upgrade: "апгрейд",
+  download: "даунлоуд",
+  upload: "аплоуд",
+  email: "имейл",
+  "e-mail": "имейл",
+  website: "вебсайт",
+  web: "веб",
+  internet: "интернет",
+  WiFi: "Вай Фай",
+  "Wi-Fi": "Вай Фай",
+  Bluetooth: "Блютус",
+  USB: "Ю Эс Би",
+  SSD: "Эс Эс Ди",
+  HDD: "Эйч Ди Ди",
+  RAM: "Рам",
+  CPU: "Си Пи Ю",
+  GPU: "Джи Пи Ю",
+  FPS: "Эф Пи Эс",
+  HD: "Эйч Ди",
+  "4K": "Четыре Ка",
+  "8K": "Восемь Ка",
+  OLED: "Оулед",
+  LED: "Лед",
+  LCD: "Эль Си Ди",
+
+  // Бизнес термины
+  CEO: "Си И Оу",
+  CTO: "Си Ти Оу",
+  CFO: "Си Эф Оу",
+  HR: "Эйч Ар",
+  PR: "Пи Ар",
+  B2B: "Би Ту Би",
+  B2C: "Би Ту Си",
+  ROI: "Ар Оу Ай",
+  KPI: "Ке Пи Ай",
+  MBA: "Эм Би Эй",
+
+  // Единицы и форматы
+  PDF: "Пи Ди Эф",
+  JPEG: "Джейпег",
+  JPG: "Джейпег",
+  PNG: "Пи Эн Джи",
+  GIF: "Гиф",
+  MP3: "Эм Пи Три",
+  MP4: "Эм Пи Четыре",
+  GB: "Гигабайт",
+  MB: "Мегабайт",
+  KB: "Килобайт",
+  TB: "Терабайт",
+};
+
+/**
+ * Заменяет английские слова на их фонетическое представление для TTS
+ * @param {string} text - Исходный текст
+ * @returns {string} - Текст с заменами
+ */
+function applyPronunciationFixes(text) {
+  let result = text;
+
+  for (const [pattern, replacement] of Object.entries(PRONUNCIATION_DICT)) {
+    // Используем word boundaries для точного совпадения слов
+    const regex = new RegExp(`\\b${pattern}\\b`, "gi");
+    result = result.replace(regex, replacement);
+  }
+
+  return result;
+}
+
+/**
  * Генерирует аудио файл из текста с помощью Edge TTS CLI (Python)
  * @param {string} text - Текст для озвучивания
  * @param {string} videoId - ID видео для именования файла
@@ -23,11 +189,15 @@ async function generateAudio(text, videoId) {
   await fs.mkdir(AUDIO_DIR, { recursive: true });
 
   // Очищаем текст от эмодзи и специальных символов для TTS
-  const cleanText = text
+  let cleanText = text
     .replace(/[\u{1F300}-\u{1F9FF}]/gu, "") // Убираем эмодзи
     .replace(/[*#]/g, "") // Убираем markdown символы
     .replace(/\n+/g, " ") // Заменяем переносы на пробелы
     .trim();
+
+  // Применяем замены для правильного произношения английских слов
+  cleanText = applyPronunciationFixes(cleanText);
+  console.log("[TTS] Text after pronunciation fixes:", cleanText);
 
   // Создаём временный файл с текстом (для длинных текстов)
   const textFilePath = path.join(AUDIO_DIR, `${videoId}.txt`);
@@ -121,11 +291,18 @@ async function generateSegmentAudio(text, videoId, segmentNumber) {
   await fs.mkdir(AUDIO_DIR, { recursive: true });
 
   // Очищаем текст от эмодзи и специальных символов для TTS
-  const cleanText = text
+  let cleanText = text
     .replace(/[\u{1F300}-\u{1F9FF}]/gu, "")
     .replace(/[*#]/g, "")
     .replace(/\n+/g, " ")
     .trim();
+
+  // Применяем замены для правильного произношения английских слов
+  cleanText = applyPronunciationFixes(cleanText);
+  console.log(
+    `[TTS] Segment ${segmentNumber} text after fixes:`,
+    cleanText.substring(0, 80) + "..."
+  );
 
   // Создаём временный файл с текстом
   const textFilePath = path.join(

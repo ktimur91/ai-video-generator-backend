@@ -18,6 +18,22 @@ const { getRandomBackgroundMusic } = require("../services/music.service");
 
 const router = express.Router();
 
+// Хранилище для отслеживания активных генераций (videoId -> aborted)
+const activeGenerations = new Map();
+
+// Проверяет, была ли генерация остановлена
+const isGenerationAborted = (videoId) =>
+  activeGenerations.get(videoId) === true;
+
+// Устанавливает флаг остановки
+const abortGeneration = (videoId) => activeGenerations.set(videoId, true);
+
+// Сбрасывает флаг при начале новой генерации
+const startGeneration = (videoId) => activeGenerations.set(videoId, false);
+
+// Очищает запись после завершения
+const cleanupGeneration = (videoId) => activeGenerations.delete(videoId);
+
 // Расширенный хелпер для создания объекта прогресса (5 шагов)
 const createProgress = (
   generateScript = "waiting",
@@ -84,6 +100,9 @@ router.post("/generate", async (req, res) => {
 
     console.log(`Created video record: ${video.id}`);
 
+    // Начинаем отслеживание генерации
+    startGeneration(video.id);
+
     // Шаг 1: Генерируем сценарий через AI (с сегментами)
     console.log("Step 1: Generating script with segments...");
     progress = createProgress(
@@ -95,10 +114,42 @@ router.post("/generate", async (req, res) => {
     );
     video = await updateVideoProgress(video.id, {}, progress);
 
+    // Проверка остановки
+    if (isGenerationAborted(video.id)) {
+      cleanupGeneration(video.id);
+      return res.json({
+        success: true,
+        message: "Generation stopped by user",
+        stopped: true,
+      });
+    }
+
     const aiResult = await generateScript(topic);
     let segments = aiResult.segments || [];
     const tags = aiResult.tags || ["shorts", "факты", "интересное"];
     const hashtags = aiResult.hashtags || ["#interesting", "#интересное"];
+
+    // Проверка остановки после шага 1
+    if (isGenerationAborted(video.id)) {
+      cleanupGeneration(video.id);
+      await updateVideoProgress(
+        video.id,
+        {
+          title: aiResult.title,
+          scriptText: aiResult.script,
+          segments: JSON.stringify(segments),
+          tags: JSON.stringify(tags),
+          hashtags: JSON.stringify(hashtags),
+          status: "PENDING",
+        },
+        createProgress("success", "waiting", "waiting", "waiting", "waiting")
+      );
+      return res.json({
+        success: true,
+        message: "Generation stopped by user",
+        stopped: true,
+      });
+    }
 
     // Сценарий готов
     progress = createProgress(
@@ -124,6 +175,21 @@ router.post("/generate", async (req, res) => {
     console.log(`Step 2: Searching stock videos on ${videoSource}...`);
     segments = await findVideosForSegments(segments);
 
+    // Проверка остановки после шага 2
+    if (isGenerationAborted(video.id)) {
+      cleanupGeneration(video.id);
+      await updateVideoProgress(
+        video.id,
+        { segments: JSON.stringify(segments), status: "PENDING" },
+        createProgress("success", "success", "waiting", "waiting", "waiting")
+      );
+      return res.json({
+        success: true,
+        message: "Generation stopped by user",
+        stopped: true,
+      });
+    }
+
     progress = createProgress(
       "success",
       "success",
@@ -140,6 +206,21 @@ router.post("/generate", async (req, res) => {
     // Шаг 3: Генерируем аудио для каждого сегмента
     console.log("Step 3: Generating audio for segments...");
     segments = await generateSegmentsAudio(segments, video.id);
+
+    // Проверка остановки после шага 3
+    if (isGenerationAborted(video.id)) {
+      cleanupGeneration(video.id);
+      await updateVideoProgress(
+        video.id,
+        { segments: JSON.stringify(segments), status: "PENDING" },
+        createProgress("success", "success", "success", "waiting", "waiting")
+      );
+      return res.json({
+        success: true,
+        message: "Generation stopped by user",
+        stopped: true,
+      });
+    }
 
     progress = createProgress(
       "success",
@@ -234,6 +315,9 @@ router.post("/generate", async (req, res) => {
     );
     video = await updateVideoProgress(video.id, videoData, progress);
 
+    // Очищаем отслеживание генерации
+    cleanupGeneration(video.id);
+
     res.json({
       success: true,
       message: "Assets generated successfully",
@@ -274,12 +358,81 @@ router.post("/generate", async (req, res) => {
           },
         })
         .catch(console.error);
+
+      // Очищаем отслеживание генерации
+      cleanupGeneration(video.id);
     }
 
     res.status(500).json({
       error: "Generation failed",
       message: error.message,
       progress,
+    });
+  }
+});
+
+/**
+ * POST /stop/:id
+ * Останавливает процесс генерации видео
+ */
+router.post("/stop/:id", async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    // Устанавливаем флаг остановки
+    abortGeneration(id);
+
+    // Получаем текущий прогресс
+    const video = await prisma.video.findUnique({
+      where: { id },
+    });
+
+    if (!video) {
+      return res.status(404).json({ error: "Video not found" });
+    }
+
+    const currentProgress = JSON.parse(video.progress || "{}");
+
+    // Помечаем текущий pending шаг как waiting (остановлен)
+    const stoppedProgress = {
+      ...currentProgress,
+      ...(currentProgress.generateScript === "pending" && {
+        generateScript: "waiting",
+      }),
+      ...(currentProgress.searchVideos === "pending" && {
+        searchVideos: "waiting",
+      }),
+      ...(currentProgress.generateAudio === "pending" && {
+        generateAudio: "waiting",
+      }),
+      ...(currentProgress.processSegments === "pending" && {
+        processSegments: "waiting",
+      }),
+      ...(currentProgress.renderVideo === "pending" && {
+        renderVideo: "waiting",
+      }),
+    };
+
+    // Обновляем статус на PENDING (можно перезапустить)
+    await prisma.video.update({
+      where: { id },
+      data: {
+        status: "PENDING",
+        progress: JSON.stringify(stoppedProgress),
+      },
+    });
+
+    console.log(`[Stop] Generation stopped for video: ${id}`);
+
+    res.json({
+      success: true,
+      message: "Generation stopped",
+    });
+  } catch (error) {
+    console.error("Stop error:", error);
+    res.status(500).json({
+      error: "Failed to stop generation",
+      message: error.message,
     });
   }
 });

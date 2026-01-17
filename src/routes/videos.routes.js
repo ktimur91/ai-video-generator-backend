@@ -2,7 +2,10 @@ const express = require("express");
 const path = require("path");
 const fs = require("fs").promises;
 const prisma = require("../services/db.service");
-const { generateScript } = require("../services/ai.service");
+const {
+  generateScript,
+  generateTopicSuggestions,
+} = require("../services/ai.service");
 const {
   generateAudio,
   generateSegmentsAudio,
@@ -582,6 +585,32 @@ router.post("/stop/:id", async (req, res) => {
     res.status(500).json({
       error: "Failed to stop generation",
       message: error.message,
+    });
+  }
+});
+
+/**
+ * POST /topic-suggestions
+ * Генерирует список тем для YouTube Shorts с помощью AI
+ */
+router.post("/topic-suggestions", async (req, res) => {
+  try {
+    const { category } = req.body;
+    console.log(
+      `[API] Generating topic suggestions for: "${category || "general"}"`
+    );
+
+    const result = await generateTopicSuggestions(category);
+
+    res.json({
+      success: true,
+      topics: result.topics,
+    });
+  } catch (error) {
+    console.error("Error generating topic suggestions:", error);
+    res.status(500).json({
+      error: "Failed to generate topic suggestions",
+      details: error.message,
     });
   }
 });

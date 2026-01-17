@@ -129,6 +129,70 @@ async function generateScript(topic) {
   }
 }
 
+/**
+ * Генерирует список тем для YouTube Shorts
+ * @param {string} category - Категория или тема для генерации идей (опционально)
+ * @returns {Promise<{topics: string[]}>}
+ */
+async function generateTopicSuggestions(category = null) {
+  console.log(
+    `[AI] Generating topic suggestions for: "${category || "general"}"`
+  );
+
+  const systemPrompt = `Ты - креативный маркетолог YouTube Shorts. Твоя задача - предлагать ВИРУСНЫЕ и ИНТЕРЕСНЫЕ темы для коротких видео.
+
+Генерируй темы которые:
+- Цепляют внимание с первых секунд
+- Вызывают любопытство
+- Подходят для формата до 60 секунд
+- Могут стать вирусными
+
+Формат ответа - JSON:
+{
+  "topics": [
+    "5 фактов о космосе, которые взорвут мозг",
+    "Почему ты неправильно чистишь зубы",
+    "3 секрета миллионеров о которых не говорят",
+    "Что произойдет если не спать 3 дня",
+    "Топ 5 самых опасных животных в мире"
+  ]
+}
+
+Генерируй 8-12 разнообразных тем. Темы должны быть на РУССКОМ языке.`;
+
+  const userPrompt = category
+    ? `Дай мне список тем для YouTube Shorts на тему: "${category}". Предложи 8-12 креативных и интересных идей.`
+    : `Дай мне список разнообразных тем для YouTube Shorts. Предложи 8-12 интересных и вирусных идей из разных сфер: наука, психология, факты, лайфхаки, интересное.`;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      temperature: 0.9,
+      max_tokens: 1000,
+      response_format: { type: "json_object" },
+    });
+
+    const content = response.choices[0].message.content;
+    const result = JSON.parse(content);
+
+    console.log(
+      `[AI] Generated ${result.topics?.length || 0} topic suggestions`
+    );
+
+    return {
+      topics: result.topics || [],
+    };
+  } catch (error) {
+    console.error("Error generating topic suggestions:", error);
+    throw new Error(`Failed to generate topics: ${error.message}`);
+  }
+}
+
 module.exports = {
   generateScript,
+  generateTopicSuggestions,
 };

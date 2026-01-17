@@ -993,12 +993,37 @@ router.patch("/videos/:id", async (req, res) => {
 /**
  * POST /retry/:id
  * Повторная генерация видео с указанного шага
- * Body: { fromStep: 1-5 } - с какого шага начать
+ * Body: { fromStep: 1-5, videoSource: 'pexels'|'pixabay'|'klipy' } - с какого шага начать
  * 1=скрипт, 2=поиск видео, 3=аудио, 4=обработка сегментов, 5=рендеринг
  */
 router.post("/retry/:id", async (req, res) => {
   const { id } = req.params;
-  const { fromStep } = req.body;
+  const { fromStep, videoSource = "pexels" } = req.body;
+
+  // Выбираем функции поиска в зависимости от источника
+  let findVideosForSegments;
+  let searchSingleVideo;
+
+  if (videoSource === "pixabay") {
+    findVideosForSegments = findVideosForSegmentsPixabay;
+    searchSingleVideo = searchSingleVideoPixabay;
+  } else if (videoSource === "klipy") {
+    findVideosForSegments = async (segments) => {
+      const results = [];
+      for (const segment of segments) {
+        let video = await searchKlipyVideo(segment.searchKeywords || []);
+        results.push({ ...segment, stockVideo: video });
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+      return results;
+    };
+    searchSingleVideo = searchKlipyVideo;
+  } else {
+    findVideosForSegments = findVideosForSegmentsPexels;
+    searchSingleVideo = searchSingleVideoPexels;
+  }
+
+  console.log(`[Retry] Using ${videoSource} for video search`);
 
   try {
     // Получаем видео из БД
@@ -1010,8 +1035,13 @@ router.post("/retry/:id", async (req, res) => {
       return res.status(404).json({ error: "Video not found" });
     }
 
-    // Разрешаем retry для FAILED и COMPLETED/PENDING (для ручного перезапуска)
-    const allowedStatuses = ["FAILED", "COMPLETED", "PENDING"];
+    // Разрешаем retry для FAILED, COMPLETED, PENDING и AWAITING_REVIEW (для ручного перезапуска)
+    const allowedStatuses = [
+      "FAILED",
+      "COMPLETED",
+      "PENDING",
+      "AWAITING_REVIEW",
+    ];
     if (!allowedStatuses.includes(video.status)) {
       return res.status(400).json({
         error: "Cannot retry video in current status",
@@ -1051,7 +1081,37 @@ router.post("/retry/:id", async (req, res) => {
       const topic =
         video.title !== "Generating..." ? video.title : "Интересные факты";
       const aiResult = await generateScript(topic);
-      segments = aiResult.segments || [];
+
+      // Формируем сегменты с intro и outro (так же как при первой генерации)
+      segments = [
+        {
+          type: "intro",
+          text: aiResult.intro,
+          searchKeywords: aiResult.introKeywords || [
+            "energy",
+            "dynamic",
+            "action",
+          ],
+        },
+        ...(aiResult.segments || []).map((s, idx) => ({
+          ...s,
+          type: "fact",
+          number: idx + 1,
+        })),
+        {
+          type: "outro",
+          text: aiResult.outro,
+          searchKeywords: aiResult.outroKeywords || [
+            "subscribe",
+            "like button",
+            "notification bell",
+          ],
+        },
+      ];
+
+      // Сохраняем tags и hashtags
+      const tags = aiResult.tags || ["shorts", "факты", "интересное"];
+      const hashtags = aiResult.hashtags || ["#interesting", "#интересное"];
 
       progress = createProgress(
         "success",
@@ -1066,6 +1126,8 @@ router.post("/retry/:id", async (req, res) => {
           title: aiResult.title,
           scriptText: aiResult.script,
           segments: JSON.stringify(segments),
+          tags: JSON.stringify(tags),
+          hashtags: JSON.stringify(hashtags),
         },
         progress
       );
@@ -1105,6 +1167,30 @@ router.post("/retry/:id", async (req, res) => {
         "waiting",
         "waiting"
       );
+
+      // Если начали с шага 1 или 2, останавливаемся на AWAITING_REVIEW для проверки
+      if (step <= 2) {
+        video = await updateVideoProgress(
+          video.id,
+          {
+            segments: JSON.stringify(segments),
+            status: "AWAITING_REVIEW",
+          },
+          progress
+        );
+
+        return res.json({
+          success: true,
+          message: "Ready for review. Please check text and video backgrounds.",
+          awaitingReview: true,
+          video: {
+            ...video,
+            progress: JSON.parse(video.progress),
+            segments: JSON.parse(video.segments),
+          },
+        });
+      }
+
       video = await updateVideoProgress(
         video.id,
         {
@@ -1185,7 +1271,8 @@ router.post("/retry/:id", async (req, res) => {
         segments.unshift({
           type: "intro",
           text: "Привет!",
-          audioPath: introAudio,
+          audioPath: introAudio.path,
+          audioDuration: introAudio.duration,
         });
       }
 
@@ -1197,7 +1284,8 @@ router.post("/retry/:id", async (req, res) => {
         segments.push({
           type: "outro",
           text: "Подпишись!",
-          audioPath: outroAudio,
+          audioPath: outroAudio.path,
+          audioDuration: outroAudio.duration,
         });
       }
 

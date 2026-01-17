@@ -2,6 +2,10 @@ node_modules
 # Keep environment variables out of version control
 .env
 
+# YouTube OAuth tokens
+youtube-tokens.json
+storage/youtube-tokens.json
+
 /generated/prisma
 
 # Database

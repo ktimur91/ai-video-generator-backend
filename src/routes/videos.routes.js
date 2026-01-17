@@ -1,4 +1,6 @@
 const express = require("express");
+const path = require("path");
+const fs = require("fs").promises;
 const prisma = require("../services/db.service");
 const { generateScript } = require("../services/ai.service");
 const {
@@ -646,6 +648,7 @@ router.patch("/videos/:id/background-music", async (req, res) => {
 /**
  * POST /render/:id
  * Запускает процесс рендеринга видео через Remotion
+ * Создает новую версию видео
  */
 router.post("/render/:id", async (req, res) => {
   const { id } = req.params;
@@ -684,6 +687,47 @@ router.post("/render/:id", async (req, res) => {
     console.log(`Starting render for video: ${id}`);
     const videoPath = await renderVideo(video);
 
+    // Определяем номер версии
+    const lastVersion = await prisma.videoVersion.findFirst({
+      where: { videoId: id },
+      orderBy: { version: "desc" },
+    });
+    const newVersionNumber = lastVersion ? lastVersion.version + 1 : 1;
+
+    // Создаем уникальный путь для версии
+    const versionedVideoPath = `storage/videos/${id}_v${newVersionNumber}.mp4`;
+    const absoluteVideoPath = path.join(__dirname, "../..", videoPath);
+    const absoluteVersionedPath = path.join(
+      __dirname,
+      "../..",
+      versionedVideoPath
+    );
+
+    // Копируем файл с новым именем для версии
+    await fs.copyFile(absoluteVideoPath, absoluteVersionedPath);
+    console.log(`Copied video to versioned path: ${versionedVideoPath}`);
+
+    // Деактивируем все предыдущие версии
+    await prisma.videoVersion.updateMany({
+      where: { videoId: id },
+      data: { isActive: false },
+    });
+
+    // Создаем новую версию с уникальным путём
+    await prisma.videoVersion.create({
+      data: {
+        videoId: id,
+        version: newVersionNumber,
+        videoPath: versionedVideoPath,
+        segments: video.segments,
+        voiceConfigId: video.voiceConfigId,
+        backgroundMusicFilename: video.backgroundMusicFilename,
+        isActive: true,
+      },
+    });
+
+    console.log(`Created video version ${newVersionNumber} for video ${id}`);
+
     // Обновляем запись с путем к видео и статусом COMPLETED
     progress = createProgress(
       "success",
@@ -704,6 +748,7 @@ router.post("/render/:id", async (req, res) => {
     res.json({
       success: true,
       message: "Video rendered successfully",
+      version: newVersionNumber,
       video: {
         ...updatedVideo,
         progress: JSON.parse(updatedVideo.progress),
@@ -801,20 +846,98 @@ router.get("/videos/:id", async (req, res) => {
 
 /**
  * DELETE /videos/:id
- * Удаляет видео по ID
+ * Удаляет видео по ID вместе со всеми связанными файлами
  */
 router.delete("/videos/:id", async (req, res) => {
   const { id } = req.params;
 
   try {
-    const video = await prisma.video.delete({
+    // Получаем видео и все его версии перед удалением
+    const video = await prisma.video.findUnique({
+      where: { id },
+      include: { versions: true },
+    });
+
+    if (!video) {
+      return res.status(404).json({ error: "Video not found" });
+    }
+
+    // Собираем все пути к файлам для удаления
+    const filesToDelete = [];
+    const storageDir = path.join(__dirname, "../../storage");
+
+    // 1. Основное видео
+    if (video.videoPath) {
+      filesToDelete.push(path.join(__dirname, "../..", video.videoPath));
+    }
+
+    // 2. Аудио файлы (intro, outro, segments)
+    const audioPatterns = [
+      `${id}_intro.mp3`,
+      `${id}_outro.mp3`,
+      `${id}_segment_*.mp3`,
+    ];
+
+    try {
+      const audioDir = path.join(storageDir, "audio");
+      const audioFiles = await fs.readdir(audioDir);
+      for (const file of audioFiles) {
+        if (file.startsWith(id)) {
+          filesToDelete.push(path.join(audioDir, file));
+        }
+      }
+    } catch (err) {
+      console.log("[Delete] No audio files found or error reading audio dir");
+    }
+
+    // 3. Все версии видео
+    for (const version of video.versions || []) {
+      if (version.videoPath) {
+        filesToDelete.push(path.join(__dirname, "../..", version.videoPath));
+      }
+    }
+
+    // 4. Превью видео
+    try {
+      const previewDir = path.join(storageDir, "video-previews");
+      const previewFiles = await fs.readdir(previewDir);
+      for (const file of previewFiles) {
+        if (file.startsWith(id)) {
+          filesToDelete.push(path.join(previewDir, file));
+        }
+      }
+    } catch (err) {
+      // Папка может не существовать
+    }
+
+    // Удаляем файлы
+    let deletedFiles = 0;
+    for (const filePath of filesToDelete) {
+      try {
+        await fs.unlink(filePath);
+        deletedFiles++;
+        console.log(`[Delete] Removed file: ${filePath}`);
+      } catch (err) {
+        // Файл может не существовать
+      }
+    }
+
+    console.log(`[Delete] Removed ${deletedFiles} files for video ${id}`);
+
+    // Удаляем версии из БД
+    await prisma.videoVersion.deleteMany({
+      where: { videoId: id },
+    });
+
+    // Удаляем видео из БД
+    await prisma.video.delete({
       where: { id },
     });
 
     res.json({
       success: true,
-      message: "Video deleted",
-      video,
+      message: "Video and all related files deleted",
+      deletedFiles,
     });
   } catch (error) {
     console.error("Error deleting video:", error);
@@ -1113,6 +1236,51 @@ router.post("/retry/:id", async (req, res) => {
 
       const videoPath = await renderVideo(video);
 
+      // Создаём новую версию видео
+      const lastVersion = await prisma.videoVersion.findFirst({
+        where: { videoId: id },
+        orderBy: { version: "desc" },
+      });
+      const newVersionNumber = lastVersion ? lastVersion.version + 1 : 1;
+
+      // Создаем уникальный путь для версии
+      const versionedVideoPath = `storage/videos/${id}_v${newVersionNumber}.mp4`;
+      const absoluteVideoPath = path.join(__dirname, "../..", videoPath);
+      const absoluteVersionedPath = path.join(
+        __dirname,
+        "../..",
+        versionedVideoPath
+      );
+
+      // Копируем файл с новым именем для версии
+      await fs.copyFile(absoluteVideoPath, absoluteVersionedPath);
+      console.log(
+        `[Retry] Copied video to versioned path: ${versionedVideoPath}`
+      );
+
+      // Деактивируем все предыдущие версии
+      await prisma.videoVersion.updateMany({
+        where: { videoId: id },
+        data: { isActive: false },
+      });
+
+      // Создаем новую версию с уникальным путём
+      await prisma.videoVersion.create({
+        data: {
+          videoId: id,
+          version: newVersionNumber,
+          videoPath: versionedVideoPath,
+          segments: JSON.stringify(segments),
+          voiceConfigId: video.voiceConfigId,
+          backgroundMusicFilename: video.backgroundMusicFilename,
+          isActive: true,
+        },
+      });
+
+      console.log(
+        `[Retry] Created video version ${newVersionNumber} for video ${id}`
+      );
+
       progress = createProgress(
         "success",
         "success",
@@ -1375,10 +1543,12 @@ router.get("/search-videos", async (req, res) => {
 /**
  * PATCH /videos/:id/segments
  * Обновляет сегменты видео (для ручной замены видео-фонов)
+ * Теперь также принимает voiceConfigId и backgroundMusicFilename для перерендера с новыми настройками
  */
 router.patch("/videos/:id/segments", async (req, res) => {
   const { id } = req.params;
-  const { segments } = req.body;
+  const { segments, voiceConfigId, backgroundMusicFilename, regenerateAudio } =
+    req.body;
 
   if (!segments || !Array.isArray(segments)) {
     return res.status(400).json({ error: "Segments array is required" });
@@ -1393,18 +1563,37 @@ router.patch("/videos/:id/segments", async (req, res) => {
       return res.status(404).json({ error: "Video not found" });
     }
 
-    // Обновляем сегменты
+    // Подготавливаем данные для обновления
+    const updateData = {
+      segments: JSON.stringify(segments),
+    };
+
+    // Если нужно перегенерировать аудио (изменился голос)
+    if (regenerateAudio) {
+      updateData.status = "GENERATING_ASSETS";
+      if (voiceConfigId !== undefined) {
+        updateData.voiceConfigId = voiceConfigId || null;
+      }
+      if (backgroundMusicFilename !== undefined) {
+        updateData.backgroundMusicFilename = backgroundMusicFilename || null;
+      }
+    } else {
+      updateData.status = "PENDING"; // Только перерендер видео
+      if (backgroundMusicFilename !== undefined) {
+        updateData.backgroundMusicFilename = backgroundMusicFilename || null;
+      }
+    }
+
+    // Обновляем видео
     const updatedVideo = await prisma.video.update({
       where: { id },
-      data: {
-        segments: JSON.stringify(segments),
-        status: "PENDING", // Сбрасываем статус для перерендера
-      },
+      data: updateData,
     });
 
     res.json({
       success: true,
       message: "Segments updated successfully",
+      regenerateAudio: !!regenerateAudio,
       video: {
         ...updatedVideo,
         segments: JSON.parse(updatedVideo.segments),
@@ -1417,6 +1606,266 @@ router.patch("/videos/:id/segments", async (req, res) => {
     console.error("Error updating segments:", error);
     res.status(500).json({
       error: "Failed to update segments",
+      message: error.message,
+    });
+  }
+});
+
+// ============================================================
+// VIDEO REGENERATION & VERSIONING
+// ============================================================
+
+/**
+ * POST /videos/:id/regenerate
+ * Полная перегенерация видео с новыми настройками (голос, музыка)
+ * Создает новую версию видео после рендера
+ */
+router.post("/videos/:id/regenerate", async (req, res) => {
+  const { id } = req.params;
+  const {
+    segments: inputSegments,
+    voiceConfigId,
+    backgroundMusicFilename,
+  } = req.body;
+
+  try {
+    const video = await prisma.video.findUnique({
+      where: { id },
+    });
+
+    if (!video) {
+      return res.status(404).json({ error: "Video not found" });
+    }
+
+    console.log(`[Regenerate] Starting regeneration for video ${id}`);
+    console.log(
+      `[Regenerate] voiceConfigId: ${voiceConfigId}, backgroundMusicFilename: ${backgroundMusicFilename}`
+    );
+
+    // Получаем конфиг голоса если указан
+    let voiceConfig = null;
+    if (voiceConfigId) {
+      voiceConfig = await prisma.voiceConfig.findUnique({
+        where: { id: voiceConfigId },
+      });
+    }
+    // Если голос не указан, пробуем найти голос по умолчанию
+    if (!voiceConfig) {
+      voiceConfig = await prisma.voiceConfig.findFirst({
+        where: { isDefault: true },
+      });
+    }
+
+    // Подготавливаем сегменты
+    let segments = inputSegments
+      ? typeof inputSegments === "string"
+        ? JSON.parse(inputSegments)
+        : inputSegments
+      : typeof video.segments === "string"
+      ? JSON.parse(video.segments)
+      : video.segments;
+
+    // Обновляем видео статус на генерацию
+    let progress = createProgress(
+      "success",
+      "success",
+      "success",
+      "pending",
+      "waiting"
+    );
+    await updateVideoProgress(
+      id,
+      {
+        status: "GENERATING_ASSETS",
+        voiceConfigId: voiceConfigId || null,
+        backgroundMusicFilename: backgroundMusicFilename || null,
+      },
+      progress
+    );
+
+    // Отправляем ответ сразу
+    res.json({
+      success: true,
+      message: "Regeneration started",
+    });
+
+    // Запускаем генерацию аудио асинхронно
+    (async () => {
+      try {
+        // Генерируем аудио для каждого сегмента
+        for (let i = 0; i < segments.length; i++) {
+          const segment = segments[i];
+          console.log(
+            `[Regenerate] Audio ${i + 1}/${segments.length}: ${
+              segment.type || "content"
+            }`
+          );
+
+          const segmentId =
+            segment.type === "intro"
+              ? `${id}_intro`
+              : segment.type === "outro"
+              ? `${id}_outro`
+              : `${id}_segment_${segment.number || i}`;
+
+          // Передаём настройки голоса в generateAudio
+          const audio = await generateAudio(
+            segment.text,
+            segmentId,
+            voiceConfig
+          );
+          segments[i].audioPath = audio.path;
+          segments[i].audioDuration = audio.duration;
+
+          // Транскрибируем для получения таймингов слов (для субтитров)
+          try {
+            const {
+              transcribeWithTimings,
+            } = require("../services/whisper.service");
+            const path = require("path");
+            const fullAudioPath = path.join(__dirname, "../../", audio.path);
+            const wordTimings = await transcribeWithTimings(fullAudioPath);
+            segments[i].wordTimings = wordTimings;
+            console.log(
+              `[Regenerate] Whisper ${i + 1}: ${wordTimings.length} words`
+            );
+          } catch (err) {
+            console.error(
+              `[Regenerate] Whisper failed for ${i + 1}:`,
+              err.message
+            );
+            segments[i].wordTimings = [];
+          }
+        }
+
+        // Аудио готово, устанавливаем статус PENDING для рендера
+        progress = createProgress(
+          "success",
+          "success",
+          "success",
+          "success",
+          "waiting"
+        );
+        await updateVideoProgress(
+          id,
+          {
+            segments: JSON.stringify(segments),
+            status: "PENDING",
+          },
+          progress
+        );
+
+        console.log(`[Regenerate] Audio generation complete, ready for render`);
+      } catch (error) {
+        console.error(`[Regenerate] Error:`, error);
+        const failedProgress = createProgress(
+          "success",
+          "success",
+          "success",
+          "failed",
+          "waiting"
+        );
+        await prisma.video.update({
+          where: { id },
+          data: {
+            status: "FAILED",
+            progress: JSON.stringify(failedProgress),
+          },
+        });
+      }
+    })();
+  } catch (error) {
+    console.error("Error starting regeneration:", error);
+    res.status(500).json({
+      error: "Failed to start regeneration",
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * GET /videos/:id/versions
+ * Получение всех версий видео
+ */
+router.get("/videos/:id/versions", async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const versions = await prisma.videoVersion.findMany({
+      where: { videoId: id },
+      orderBy: { version: "desc" },
+      include: {
+        voiceConfig: true,
+      },
+    });
+
+    res.json(versions);
+  } catch (error) {
+    console.error("Error fetching video versions:", error);
+    res.status(500).json({
+      error: "Failed to fetch video versions",
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * POST /videos/:id/versions/:version/activate
+ * Активирует указанную версию видео
+ */
+router.post("/videos/:id/versions/:version/activate", async (req, res) => {
+  const { id, version } = req.params;
+
+  try {
+    const versionRecord = await prisma.videoVersion.findUnique({
+      where: {
+        videoId_version: {
+          videoId: id,
+          version: parseInt(version),
+        },
+      },
+    });
+
+    if (!versionRecord) {
+      return res.status(404).json({ error: "Version not found" });
+    }
+
+    // Деактивируем все версии
+    await prisma.videoVersion.updateMany({
+      where: { videoId: id },
+      data: { isActive: false },
+    });
+
+    // Активируем выбранную версию
+    await prisma.videoVersion.update({
+      where: {
+        videoId_version: {
+          videoId: id,
+          version: parseInt(version),
+        },
+      },
+      data: { isActive: true },
+    });
+
+    // Обновляем путь к видео в основной записи
+    await prisma.video.update({
+      where: { id },
+      data: {
+        videoPath: versionRecord.videoPath,
+        segments: versionRecord.segments,
+        voiceConfigId: versionRecord.voiceConfigId,
+        backgroundMusicFilename: versionRecord.backgroundMusicFilename,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: `Version ${version} activated`,
+    });
+  } catch (error) {
+    console.error("Error activating version:", error);
+    res.status(500).json({
+      error: "Failed to activate version",
       message: error.message,
     });
   }

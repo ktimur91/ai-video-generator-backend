@@ -12,7 +12,8 @@ const FRONT_RENDER_DIR = path.join(__dirname, "../../../front-render");
  * @param {string} video.title - Заголовок видео
  * @param {string} video.scriptText - Текст сценария
  * @param {string} video.segments - JSON строка с сегментами
- * @param {string} video.backgroundMusicUrl - URL глобальной фоновой музыки
+ * @param {string} video.backgroundMusicUrl - URL глобальной фоновой музыки (legacy)
+ * @param {string} video.backgroundMusicFilename - Имя файла фоновой музыки
  * @returns {Promise<string>} - Путь к созданному видео файлу
  */
 async function renderVideo(video) {
@@ -22,6 +23,7 @@ async function renderVideo(video) {
     scriptText,
     segments: segmentsJson,
     backgroundMusicUrl,
+    backgroundMusicFilename,
   } = video;
   const outputFilename = `${id}.mp4`;
   const outputPath = path.join(VIDEOS_DIR, outputFilename);
@@ -41,12 +43,25 @@ async function renderVideo(video) {
     audioUrl: segment.audioPath ? `${backendUrl}/${segment.audioPath}` : null,
   }));
 
+  // Определяем URL фоновой музыки
+  // Приоритет: backgroundMusicFilename > backgroundMusicUrl
+  let finalBackgroundMusicUrl = null;
+  if (backgroundMusicFilename) {
+    finalBackgroundMusicUrl = `${backendUrl}/storage/background-musics/${backgroundMusicFilename}`;
+  } else if (backgroundMusicUrl) {
+    finalBackgroundMusicUrl = backgroundMusicUrl;
+  }
+
+  console.log(
+    `[Render] Background music: ${finalBackgroundMusicUrl || "none"}`
+  );
+
   // Подготовка props для Remotion (с глобальной фоновой музыкой)
   const props = JSON.stringify({
     title,
     scriptText: scriptText,
     segments: segmentsWithUrls,
-    backgroundMusicUrl: backgroundMusicUrl || null,
+    backgroundMusicUrl: finalBackgroundMusicUrl,
   });
 
   // Экранируем props для shell

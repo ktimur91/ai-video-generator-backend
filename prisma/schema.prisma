@@ -55,4 +55,23 @@ model VoiceConfig {
   isDefault Boolean  @default(false)   // Основной голос
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  videoVersions VideoVersion[]
+}
+
+model VideoVersion {
+  id                      String   @id @default(uuid())
+  videoId                 String   // ID родительского видео
+  version                 Int      // Номер версии (1, 2, 3...)
+  videoPath               String?  // Путь к отрендеренному видео
+  segments                String?  // JSON сегментов этой версии
+  voiceConfigId           String?  // ID голоса для этой версии
+  backgroundMusicFilename String?  // Имя файла музыки
+  isActive                Boolean  @default(false) // Активная версия для публикации
+  createdAt               DateTime @default(now())
+
+  voiceConfig             VoiceConfig? @relation(fields: [voiceConfigId], references: [id])
+
+  @@unique([videoId, version])
+  @@index([videoId])
 }

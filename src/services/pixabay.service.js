@@ -162,8 +162,73 @@ async function searchSingleVideo(keywords, type = "general") {
   return video;
 }
 
+/**
+ * Ищет видео и возвращает ВСЕ подходящие с превью для AI-выбора
+ * @param {string[]} keywords - Массив ключевых слов для поиска
+ * @param {object} options - Опции поиска
+ * @returns {Promise<Array>} - Массив видео с thumbnailUrl
+ */
+async function searchVideosWithThumbnails(keywords, options = {}) {
+  const { minDuration = 5, maxDuration = 30 } = options;
+
+  const allVideos = [];
+
+  // Пробуем первое ключевое слово
+  const keyword = keywords[0];
+  if (!keyword) return [];
+
+  try {
+    console.log(`[Pixabay] Searching with thumbnails for: "${keyword}"`);
+
+    const response = await pixabayClient.get("/videos/", {
+      params: {
+        q: keyword,
+        per_page: 20,
+        video_type: "film",
+        safesearch: true,
+      },
+    });
+
+    const videos = response.data.hits || [];
+
+    // Фильтруем: только вертикальные + подходящая длительность
+    const suitable = videos.filter((v) => {
+      const isVertical = v.videos?.medium?.height > v.videos?.medium?.width;
+      const durationOk = v.duration >= minDuration && v.duration <= maxDuration;
+      return isVertical && durationOk;
+    });
+
+    for (const video of suitable) {
+      const videoFile = findBestVideoFile(video.videos);
+      if (videoFile) {
+        allVideos.push({
+          id: video.id,
+          url: videoFile.url,
+          width: videoFile.width,
+          height: videoFile.height,
+          duration: video.duration,
+          photographer: video.user,
+          // Pixabay дает несколько форматов превью
+          thumbnailUrl:
+            video.videos.tiny?.thumbnail ||
+            video.videos.small?.thumbnail ||
+            `https://i.vimeocdn.com/video/${video.picture_id}_640x360.jpg`,
+          source: "pixabay",
+        });
+      }
+    }
+
+    console.log(`[Pixabay] Found ${allVideos.length} suitable videos`);
+  } catch (error) {
+    console.error(`[Pixabay] Error searching "${keyword}":`, error.message);
+  }
+
+  return allVideos;
+}
+
 module.exports = {
   searchVideo,
   findVideosForSegments,
   searchSingleVideo,
+  searchVideosWithThumbnails,
 };

@@ -28,8 +28,9 @@ model Video {
   videoPath               String?
   segments                String?     // JSON массив сегментов: [{text, keywords, audioPath, audioDuration, stockVideoUrl}]
   progress                String?     // JSON с детальным прогрессом
-  backgroundMusicUrl      String?     // URL глобальной фоновой музыки
-  backgroundMusicFilename String?     // Имя файла фоновой музыки
+  backgroundMusicUrl      String?     // URL фоновой музыки (для стриминга)
+  backgroundMusicFilename String?     // Имя/название трека
+  backgroundMusicData     String?     // JSON с полными данными музыки из Jamendo
   tags                    String?     // JSON массив тегов для YouTube
   hashtags                String?     // JSON массив хештегов для описания (#cats #коты)
   

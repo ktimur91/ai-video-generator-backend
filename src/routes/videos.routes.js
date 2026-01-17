@@ -14,13 +14,17 @@ const { renderVideo } = require("../services/render.service");
 const {
   findVideosForSegments: findVideosForSegmentsPexels,
   searchSingleVideo: searchSingleVideoPexels,
+  searchVideosWithThumbnails: searchVideosWithThumbnailsPexels,
 } = require("../services/pexels.service");
 const {
   findVideosForSegments: findVideosForSegmentsPixabay,
   searchSingleVideo: searchSingleVideoPixabay,
+  searchVideosWithThumbnails: searchVideosWithThumbnailsPixabay,
 } = require("../services/pixabay.service");
 const { searchVideo: searchKlipyVideo } = require("../services/klipy.service");
-const { getRandomBackgroundMusic } = require("../services/music.service");
+const { searchMusicForTopic } = require("../services/jamendo.service");
+const { selectBestVideo } = require("../services/video-selector.service");
+const { selectBestTrack } = require("../services/music-selector.service");
 
 const router = express.Router();
 
@@ -79,7 +83,12 @@ const updateVideoProgress = async (videoId, data, progress) => {
  * 3. Останавливается на статусе AWAITING_REVIEW для ручной проверки
  */
 router.post("/generate", async (req, res) => {
-  const { topic, videoSource = "pexels" } = req.body;
+  const {
+    topic,
+    videoSource = "pexels",
+    useAIVideoSelection = false,
+    useAIMusicSelection = false,
+  } = req.body;
 
   if (!topic) {
     return res.status(400).json({ error: "Topic is required" });
@@ -88,10 +97,12 @@ router.post("/generate", async (req, res) => {
   // Выбираем функции поиска в зависимости от источника
   let findVideosForSegments;
   let searchSingleVideo;
+  let searchVideosWithThumbnails;
 
   if (videoSource === "pixabay") {
     findVideosForSegments = findVideosForSegmentsPixabay;
     searchSingleVideo = searchSingleVideoPixabay;
+    searchVideosWithThumbnails = searchVideosWithThumbnailsPixabay;
   } else if (videoSource === "klipy") {
     // Для Klipy используем обёртку, т.к. у него другой API
     findVideosForSegments = async (segments) => {
@@ -104,12 +115,18 @@ router.post("/generate", async (req, res) => {
       return results;
     };
     searchSingleVideo = searchKlipyVideo;
+    searchVideosWithThumbnails = null; // Klipy не поддерживает AI-выбор
   } else {
     findVideosForSegments = findVideosForSegmentsPexels;
     searchSingleVideo = searchSingleVideoPexels;
+    searchVideosWithThumbnails = searchVideosWithThumbnailsPexels;
   }
 
-  console.log(`[VideoSource] Using ${videoSource} for video search`);
+  console.log(
+    `[VideoSource] Using ${videoSource} for video search${
+      useAIVideoSelection ? " with AI video selection" : ""
+    }${useAIMusicSelection ? " with AI music selection" : ""}`
+  );
 
   let video = null;
   let progress = createProgress();
@@ -227,6 +244,9 @@ router.post("/generate", async (req, res) => {
     // ========== ШАГ 2: Подбор видео фонов + музыки ==========
     console.log(`Step 2: Searching stock videos on ${videoSource}...`);
 
+    // Отслеживаем уже использованные видео чтобы избежать повторов
+    const usedVideoIds = [];
+
     // Ищем видео для каждого сегмента
     for (let i = 0; i < segments.length; i++) {
       const segment = segments[i];
@@ -236,15 +256,100 @@ router.post("/generate", async (req, res) => {
         console.log(
           `[Segment ${i}] Searching video with keywords: ${keywords.join(", ")}`
         );
-        const stockVideo = await searchSingleVideo(keywords, segment.type);
+
+        let stockVideo;
+
+        // Если включен AI-выбор и доступна функция для этого источника
+        if (useAIVideoSelection && searchVideosWithThumbnails) {
+          // Получаем все подходящие видео с превью
+          const videoOptions = await searchVideosWithThumbnails(keywords, {
+            minDuration:
+              segment.type === "intro" || segment.type === "outro" ? 3 : 5,
+            maxDuration: 30,
+          });
+
+          if (videoOptions.length > 0) {
+            // AI выбирает лучшее видео по превью, исключая уже использованные
+            stockVideo = await selectBestVideo(
+              segment.text,
+              videoOptions,
+              usedVideoIds
+            );
+          }
+        } else {
+          // Обычный случайный выбор
+          stockVideo = await searchSingleVideo(keywords, segment.type);
+        }
+
+        // Запоминаем ID использованного видео
+        if (stockVideo?.id) {
+          usedVideoIds.push(stockVideo.id);
+          usedVideoIds.push(String(stockVideo.id));
+        }
+
         segments[i].stockVideo = stockVideo;
       }
     }
 
-    // Получаем рандомную фоновую музыку
-    const bgMusic = await getRandomBackgroundMusic();
-    if (bgMusic) {
-      console.log(`[Music] Using background music: ${bgMusic.filename}`);
+    // Получаем фоновую музыку из Jamendo на основе AI-параметров
+    let bgMusic = null;
+    const musicParams = aiResult.music || {};
+
+    try {
+      console.log(`[Music] Searching music with params:`, musicParams);
+
+      const musicTracks = await searchMusicForTopic({
+        keywords: musicParams.keywords || ["background", "cinematic"],
+        mood: musicParams.mood || "inspiring",
+        tempo: musicParams.tempo || "medium",
+        limit: useAIMusicSelection ? 10 : 5, // Больше треков для AI-выбора
+      });
+
+      if (musicTracks.length > 0) {
+        let selectedTrack;
+
+        if (useAIMusicSelection) {
+          // AI анализирует треки и выбирает лучший
+          console.log(
+            `[Music] AI selecting best track from ${musicTracks.length} options...`
+          );
+          selectedTrack = await selectBestTrack(
+            topic,
+            aiResult.title,
+            musicTracks
+          );
+        } else {
+          // Берём первый (наиболее популярный) трек
+          selectedTrack = musicTracks[0];
+        }
+
+        if (selectedTrack) {
+          bgMusic = {
+            id: selectedTrack.id,
+            name: selectedTrack.name,
+            artist: selectedTrack.artist,
+            audioUrl: selectedTrack.audioUrl,
+            downloadUrl: selectedTrack.downloadUrl,
+            imageUrl: selectedTrack.imageUrl,
+            duration: selectedTrack.duration,
+            genres: selectedTrack.genres,
+            moods: selectedTrack.moods,
+            speed: selectedTrack.speed,
+            isInstrumental: selectedTrack.isInstrumental,
+            license: selectedTrack.license,
+            source: "jamendo",
+          };
+          console.log(
+            `[Music] Selected: "${selectedTrack.name}" by ${selectedTrack.artist}`
+          );
+        }
+      } else {
+        console.log(
+          `[Music] No tracks found, video will have no background music`
+        );
+      }
+    } catch (musicError) {
+      console.error("[Music] Error searching music:", musicError.message);
     }
 
     // Проверка остановки после шага 2
@@ -254,8 +359,11 @@ router.post("/generate", async (req, res) => {
         video.id,
         {
           segments: JSON.stringify(segments),
-          backgroundMusicUrl: bgMusic?.url || null,
-          backgroundMusicFilename: bgMusic?.filename || null,
+          backgroundMusicUrl: bgMusic?.audioUrl || bgMusic?.downloadUrl || null,
+          backgroundMusicFilename: bgMusic?.name
+            ? `${bgMusic.name} - ${bgMusic.artist}`
+            : null,
+          backgroundMusicData: bgMusic ? JSON.stringify(bgMusic) : null,
           status: "PENDING",
         },
         createProgress("success", "success", "waiting", "waiting", "waiting")
@@ -279,8 +387,11 @@ router.post("/generate", async (req, res) => {
 
     const videoData = {
       segments: JSON.stringify(segments),
-      backgroundMusicUrl: bgMusic?.url || null,
-      backgroundMusicFilename: bgMusic?.filename || null,
+      backgroundMusicUrl: bgMusic?.audioUrl || bgMusic?.downloadUrl || null,
+      backgroundMusicFilename: bgMusic?.name
+        ? `${bgMusic.name} - ${bgMusic.artist}`
+        : null,
+      backgroundMusicData: bgMusic ? JSON.stringify(bgMusic) : null,
       status: "AWAITING_REVIEW", // Новый статус!
     };
 
@@ -348,7 +459,7 @@ router.post("/approve/:id", async (req, res) => {
   const { id } = req.params;
   const {
     segments: updatedSegments,
-    backgroundMusicFilename,
+    backgroundMusicData,
     voiceConfigId,
   } = req.body;
 
@@ -376,10 +487,28 @@ router.post("/approve/:id", async (req, res) => {
       ? JSON.parse(video.segments)
       : video.segments;
 
-    // Обновляем backgroundMusicFilename и voiceConfigId если переданы
+    // Обновляем backgroundMusicData и voiceConfigId если переданы
     const updateData = {};
-    if (backgroundMusicFilename !== undefined) {
-      updateData.backgroundMusicFilename = backgroundMusicFilename || null;
+    if (backgroundMusicData !== undefined) {
+      if (backgroundMusicData) {
+        updateData.backgroundMusicData =
+          typeof backgroundMusicData === "string"
+            ? backgroundMusicData
+            : JSON.stringify(backgroundMusicData);
+        updateData.backgroundMusicUrl =
+          backgroundMusicData.downloadUrl ||
+          backgroundMusicData.audioUrl ||
+          null;
+        updateData.backgroundMusicFilename = backgroundMusicData.name
+          ? `${backgroundMusicData.name} - ${
+              backgroundMusicData.artist || "Unknown"
+            }`
+          : null;
+      } else {
+        updateData.backgroundMusicData = null;
+        updateData.backgroundMusicUrl = null;
+        updateData.backgroundMusicFilename = null;
+      }
     }
     if (voiceConfigId !== undefined) {
       updateData.voiceConfigId = voiceConfigId || null;
@@ -500,18 +629,17 @@ router.post("/approve/:id", async (req, res) => {
 
     cleanupGeneration(video.id);
 
+    // Получаем обновленное видео из базы
+    const updatedVideo = await prisma.video.findUnique({ where: { id } });
+
     res.json({
       success: true,
       message: "Audio generated successfully. Ready for rendering.",
       video: {
-        ...video,
+        ...updatedVideo,
         segments,
         progress,
         status: "PENDING",
-        backgroundMusicFilename:
-          backgroundMusicFilename !== undefined
-            ? backgroundMusicFilename || null
-            : video.backgroundMusicFilename,
       },
     });
   } catch (error) {
@@ -1660,11 +1788,11 @@ router.get("/search-videos", async (req, res) => {
 /**
  * PATCH /videos/:id/segments
  * Обновляет сегменты видео (для ручной замены видео-фонов)
- * Теперь также принимает voiceConfigId и backgroundMusicFilename для перерендера с новыми настройками
+ * Теперь также принимает voiceConfigId и backgroundMusicData для перерендера с новыми настройками
  */
 router.patch("/videos/:id/segments", async (req, res) => {
   const { id } = req.params;
-  const { segments, voiceConfigId, backgroundMusicFilename, regenerateAudio } =
+  const { segments, voiceConfigId, backgroundMusicData, regenerateAudio } =
     req.body;
 
   if (!segments || !Array.isArray(segments)) {
@@ -1685,20 +1813,37 @@ router.patch("/videos/:id/segments", async (req, res) => {
       segments: JSON.stringify(segments),
     };
 
+    // Обрабатываем backgroundMusicData
+    if (backgroundMusicData !== undefined) {
+      if (backgroundMusicData) {
+        updateData.backgroundMusicData =
+          typeof backgroundMusicData === "string"
+            ? backgroundMusicData
+            : JSON.stringify(backgroundMusicData);
+        updateData.backgroundMusicUrl =
+          backgroundMusicData.downloadUrl ||
+          backgroundMusicData.audioUrl ||
+          null;
+        updateData.backgroundMusicFilename = backgroundMusicData.name
+          ? `${backgroundMusicData.name} - ${
+              backgroundMusicData.artist || "Unknown"
+            }`
+          : null;
+      } else {
+        updateData.backgroundMusicData = null;
+        updateData.backgroundMusicUrl = null;
+        updateData.backgroundMusicFilename = null;
+      }
+    }
+
     // Если нужно перегенерировать аудио (изменился голос)
     if (regenerateAudio) {
       updateData.status = "GENERATING_ASSETS";
       if (voiceConfigId !== undefined) {
         updateData.voiceConfigId = voiceConfigId || null;
       }
-      if (backgroundMusicFilename !== undefined) {
-        updateData.backgroundMusicFilename = backgroundMusicFilename || null;
-      }
     } else {
       updateData.status = "PENDING"; // Только перерендер видео
-      if (backgroundMusicFilename !== undefined) {
-        updateData.backgroundMusicFilename = backgroundMusicFilename || null;
-      }
     }
 
     // Обновляем видео
@@ -1742,7 +1887,7 @@ router.post("/videos/:id/regenerate", async (req, res) => {
   const {
     segments: inputSegments,
     voiceConfigId,
-    backgroundMusicFilename,
+    backgroundMusicData,
   } = req.body;
 
   try {
@@ -1756,7 +1901,9 @@ router.post("/videos/:id/regenerate", async (req, res) => {
 
     console.log(`[Regenerate] Starting regeneration for video ${id}`);
     console.log(
-      `[Regenerate] voiceConfigId: ${voiceConfigId}, backgroundMusicFilename: ${backgroundMusicFilename}`
+      `[Regenerate] voiceConfigId: ${voiceConfigId}, backgroundMusicData: ${
+        backgroundMusicData ? "provided" : "none"
+      }`
     );
 
     // Получаем конфиг голоса если указан
@@ -1782,6 +1929,35 @@ router.post("/videos/:id/regenerate", async (req, res) => {
       ? JSON.parse(video.segments)
       : video.segments;
 
+    // Подготавливаем данные для обновления
+    const updateData = {
+      status: "GENERATING_ASSETS",
+      voiceConfigId: voiceConfigId || null,
+    };
+
+    // Обрабатываем backgroundMusicData
+    if (backgroundMusicData !== undefined) {
+      if (backgroundMusicData) {
+        updateData.backgroundMusicData =
+          typeof backgroundMusicData === "string"
+            ? backgroundMusicData
+            : JSON.stringify(backgroundMusicData);
+        updateData.backgroundMusicUrl =
+          backgroundMusicData.downloadUrl ||
+          backgroundMusicData.audioUrl ||
+          null;
+        updateData.backgroundMusicFilename = backgroundMusicData.name
+          ? `${backgroundMusicData.name} - ${
+              backgroundMusicData.artist || "Unknown"
+            }`
+          : null;
+      } else {
+        updateData.backgroundMusicData = null;
+        updateData.backgroundMusicUrl = null;
+        updateData.backgroundMusicFilename = null;
+      }
+    }
+
     // Обновляем видео статус на генерацию
     let progress = createProgress(
       "success",
@@ -1790,15 +1966,7 @@ router.post("/videos/:id/regenerate", async (req, res) => {
       "pending",
       "waiting"
     );
-    await updateVideoProgress(
-      id,
-      {
-        status: "GENERATING_ASSETS",
-        voiceConfigId: voiceConfigId || null,
-        backgroundMusicFilename: backgroundMusicFilename || null,
-      },
-      progress
-    );
+    await updateVideoProgress(id, updateData, progress);
 
     // Отправляем ответ сразу
     res.json({

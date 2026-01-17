@@ -49,19 +49,63 @@ async function generateScript(topic) {
 {
   "title": "заголовок видео",
   "intro": "КОРОТКОЕ вступление (5-15 слов максимум!)",
-  "introKeywords": ["energy", "dynamic", "action"],
+  "introKeywords": ["epic cinematic sky", "golden light clouds", "dramatic sunset horizon"],
   "segments": [
     {
       "number": 1,
       "text": "текст первого факта/совета (2-3 предложения)",
-      "searchKeywords": ["keyword1", "keyword2", "keyword3"]
+      "searchKeywords": ["visual action phrase 1", "visual action phrase 2", "visual action phrase 3"]
     }
   ],
   "outro": "ЭМОЦИОНАЛЬНЫЙ призыв с лайком, подпиской, колокольчиком и комментарием!",
-  "outroKeywords": ["subscribe", "like button", "notification bell"],
+  "outroKeywords": ["phone notification glow", "hand pressing like", "bell ringing animation"],
   "tags": ["тег1", "тег2", "тег3", "тег4", "тег5"],
-  "hashtags": ["#cats", "#коты", "#кошки", "#смешные"]
+  "hashtags": ["#cats", "#коты", "#кошки", "#смешные"],
+  "music": {
+    "mood": "epic",
+    "tempo": "medium",
+    "keywords": ["cinematic", "orchestral", "dramatic"]
+  }
 }
+
+=== ВАЖНО для music ===
+Подбери фоновую музыку для видео:
+
+mood - настроение музыки (одно из):
+- "epic" - эпичная, кинематографичная (для мифологии, истории, фактов)
+- "calm" - спокойная, умиротворяющая (для природы, медитации)
+- "energetic" - энергичная (для спорта, мотивации, лайфхаков)
+- "dark" - темная, напряженная (для хоррора, криминала, тайн)
+- "happy" - веселая, позитивная (для юмора, животных)
+- "inspiring" - вдохновляющая (для мотивации, успеха)
+- "mysterious" - загадочная (для науки, космоса, тайн)
+
+tempo - темп музыки:
+- "slow" - медленный (для спокойных тем)
+- "medium" - средний (универсальный)
+- "fast" - быстрый (для энергичных тем)
+
+keywords - 2-4 ключевых слова для поиска музыки на АНГЛИЙСКОМ:
+- Примеры для мифологии: ["epic", "orchestral", "cinematic", "ancient"]
+- Примеры для науки: ["electronic", "ambient", "futuristic"]
+- Примеры для юмора: ["fun", "quirky", "playful"]
+
+=== КРИТИЧЕСКИ ВАЖНО для searchKeywords, introKeywords, outroKeywords ===
+Ключевые слова должны описывать ВИЗУАЛЬНОЕ ДЕЙСТВИЕ или АТМОСФЕРУ, а НЕ абстрактные понятия!
+
+ПЛОХИЕ примеры (абстрактные, не ищутся на стоках):
+- "rome", "mythology", "gods", "history", "facts"
+- "hades", "persephone", "zeus" (имена не дают результатов)
+
+ХОРОШИЕ примеры (визуальные, находятся на стоках):
+- "dark underground cave fire" - темная пещера с огнем
+- "ancient marble statue temple" - античная статуя в храме  
+- "mysterious fog forest night" - туманный лес ночью
+- "golden throne room palace" - золотой тронный зал
+- "stormy ocean waves dramatic" - штормовой океан с волнами
+
+Для каждого сегмента генерируй 3 РАЗНЫХ визуальных фразы из 2-4 слов.
+Фразы должны быть УНИКАЛЬНЫМИ для каждого сегмента чтобы видео фоны не повторялись!
 
 ВАЖНО для tags:
 - Генерируй 8-15 тегов на РУССКОМ языке

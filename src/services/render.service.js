@@ -12,8 +12,8 @@ const FRONT_RENDER_DIR = path.join(__dirname, "../../../front-render");
  * @param {string} video.title - Заголовок видео
  * @param {string} video.scriptText - Текст сценария
  * @param {string} video.segments - JSON строка с сегментами
- * @param {string} video.backgroundMusicUrl - URL глобальной фоновой музыки (legacy)
- * @param {string} video.backgroundMusicFilename - Имя файла фоновой музыки
+ * @param {string} video.backgroundMusicUrl - URL фоновой музыки (Jamendo)
+ * @param {string} video.backgroundMusicData - JSON с полными данными трека
  * @returns {Promise<string>} - Путь к созданному видео файлу
  */
 async function renderVideo(video) {
@@ -23,7 +23,7 @@ async function renderVideo(video) {
     scriptText,
     segments: segmentsJson,
     backgroundMusicUrl,
-    backgroundMusicFilename,
+    backgroundMusicData,
   } = video;
   const outputFilename = `${id}.mp4`;
   const outputPath = path.join(VIDEOS_DIR, outputFilename);
@@ -44,11 +44,25 @@ async function renderVideo(video) {
   }));
 
   // Определяем URL фоновой музыки
-  // Приоритет: backgroundMusicFilename > backgroundMusicUrl
+  // Приоритет: backgroundMusicData.downloadUrl > backgroundMusicUrl
   let finalBackgroundMusicUrl = null;
-  if (backgroundMusicFilename) {
-    finalBackgroundMusicUrl = `${backendUrl}/storage/background-musics/${backgroundMusicFilename}`;
-  } else if (backgroundMusicUrl) {
+
+  if (backgroundMusicData) {
+    try {
+      const musicData =
+        typeof backgroundMusicData === "string"
+          ? JSON.parse(backgroundMusicData)
+          : backgroundMusicData;
+      // Используем downloadUrl (полный файл), audioUrl (stream) или url (старый формат)
+      finalBackgroundMusicUrl =
+        musicData.downloadUrl || musicData.audioUrl || musicData.url || null;
+    } catch (e) {
+      console.error("[Render] Failed to parse backgroundMusicData:", e);
+    }
+  }
+
+  // Fallback на backgroundMusicUrl если data не работает
+  if (!finalBackgroundMusicUrl && backgroundMusicUrl) {
     finalBackgroundMusicUrl = backgroundMusicUrl;
   }
 

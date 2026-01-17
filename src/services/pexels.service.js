@@ -166,8 +166,71 @@ async function searchSingleVideo(keywords, type = "general") {
   return video;
 }
 
+/**
+ * Ищет видео и возвращает ВСЕ подходящие с превью для AI-выбора
+ * @param {string[]} keywords - Массив ключевых слов для поиска
+ * @param {object} options - Опции поиска
+ * @returns {Promise<Array>} - Массив видео с thumbnailUrl
+ */
+async function searchVideosWithThumbnails(keywords, options = {}) {
+  const {
+    orientation = "portrait",
+    minDuration = 5,
+    maxDuration = 30,
+  } = options;
+
+  const allVideos = [];
+
+  // Пробуем первое ключевое слово (обычно самое релевантное)
+  const keyword = keywords[0];
+  if (!keyword) return [];
+
+  try {
+    console.log(`[Pexels] Searching with thumbnails for: "${keyword}"`);
+
+    const response = await pexelsClient.get("/videos/search", {
+      params: {
+        query: keyword,
+        orientation: orientation,
+        per_page: 15,
+        size: "medium",
+      },
+    });
+
+    const videos = response.data.videos || [];
+
+    // Фильтруем по длительности
+    const suitable = videos.filter(
+      (v) => v.duration >= minDuration && v.duration <= maxDuration
+    );
+
+    for (const video of suitable) {
+      const videoFile = findBestVideoFile(video.video_files);
+      if (videoFile) {
+        allVideos.push({
+          id: video.id,
+          url: videoFile.link,
+          width: videoFile.width,
+          height: videoFile.height,
+          duration: video.duration,
+          photographer: video.user.name,
+          thumbnailUrl: video.image, // Pexels предоставляет превью
+          source: "pexels",
+        });
+      }
+    }
+
+    console.log(`[Pexels] Found ${allVideos.length} suitable videos`);
+  } catch (error) {
+    console.error(`[Pexels] Error searching "${keyword}":`, error.message);
+  }
+
+  return allVideos;
+}
+
 module.exports = {
   searchVideo,
   findVideosForSegments,
   searchSingleVideo,
+  searchVideosWithThumbnails,
 };

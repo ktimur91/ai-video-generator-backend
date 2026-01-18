@@ -7,6 +7,7 @@ const videosRoutes = require("./routes/videos.routes");
 const voicesRoutes = require("./routes/voices.routes");
 const musicRoutes = require("./routes/music.routes");
 const youtubeRoutes = require("./routes/youtube.routes");
+const templatesRoutes = require("./routes/templates.routes");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -24,6 +25,7 @@ app.use("/api", videosRoutes);
 app.use("/api/voices", voicesRoutes);
 app.use("/api/music", musicRoutes);
 app.use("/api/youtube", youtubeRoutes);
+app.use("/api/templates", templatesRoutes);
 
 // Health check
 app.get("/health", (req, res) => {

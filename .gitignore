@@ -19,8 +19,14 @@ storage/videos/*
 !storage/videos/.gitkeep
 storage/voice-previews/*
 !storage/voice-previews/.gitkeep
+storage/video-previews/*
+!storage/video-previews/.gitkeep
 storage/background-musics/*
 !storage/background-musics/.gitkeep
+storage/overlays/*
+!storage/overlays/.gitkeep
+storage/cta-icons/*
+!storage/cta-icons/.gitkeep
 
 # Logs
 *.log

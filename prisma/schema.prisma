@@ -41,12 +41,14 @@ model Video {
   publishedAt        DateTime?   // Дата публикации
   youtubeChannelId   String?     // ID канала на который опубликовано
   
-  // Настройки голоса
+  // Настройки голоса и шаблона
   voiceConfigId      String?     // ID выбранного голоса
+  templateId         String?     // ID шаблона внешнего вида
 
   createdAt          DateTime    @default(now())
   
   youtubeChannel     YouTubeChannel? @relation(fields: [youtubeChannelId], references: [id])
+  template           VideoTemplate?  @relation(fields: [templateId], references: [id])
   videoVersions      VideoVersion[]
 }
 
@@ -80,6 +82,7 @@ model YouTubeChannel {
   
   credentials     YouTubeCredentials? @relation(fields: [credentialsId], references: [id], onDelete: Cascade)
   videos          Video[]
+  templates       VideoTemplate[]
 }
 
 model VoiceConfig {
@@ -113,3 +116,95 @@ model VideoVersion {
   @@unique([videoId, version])
   @@index([videoId])
 }
+
+// Шаблон внешнего вида видео
+model VideoTemplate {
+  id          String   @id @default(uuid())
+  name        String   // Название шаблона
+  channelId   String?  // Для какого канала (null = универсальный)
+  isDefault   Boolean  @default(false)
+  
+  // ========== ЦВЕТА ==========
+  primaryColor     String  @default("#8B5CF6") // Основной цвет по умолчанию
+  backgroundColor  String  @default("#000000") // Цвет фона если нет видео
+  
+  // ========== СУБТИТРЫ ==========
+  subtitleMode         String  @default("karaoke") // karaoke | phrase | word
+  subtitlePositionX    Float   @default(50)  // % от ширины (центр по умолчанию)
+  subtitlePositionY    Float   @default(80)  // % от высоты (снизу по умолчанию)
+  subtitlePositionPreset String? // top | center | bottom | null=custom
+  subtitleWidth        Float   @default(90)  // Ширина блока в %
+  subtitleFontFamily   String  @default("Inter") // Название шрифта
+  subtitleFontWeight   String  @default("600")   // 400 | 500 | 600 | 700 | 800
+  subtitleFontSize     Int     @default(28)
+  subtitleFontColor    String  @default("#FFFFFF")
+  subtitleHighlightColor String @default("#FFD700") // Цвет подсветки караоке (null = primaryColor)
+  subtitleStrokeEnabled Boolean @default(false) // Включить обводку текста
+  subtitleStrokeColor  String  @default("#000000") // Цвет обводки
+  subtitleStrokeWidth  Int     @default(2) // Толщина обводки в px
+  subtitleBgColor      String  @default("rgba(0,0,0,0.7)")
+  subtitleBgEnabled    Boolean @default(true)
+  
+  // ========== НУМЕРАЦИЯ ФАКТОВ ==========
+  showNumbers          Boolean @default(true)
+  numberPositionX      Float   @default(5)   // % от ширины
+  numberPositionY      Float   @default(5)   // % от высоты
+  numberPositionPreset String? @default("top-left") // top-left | top-right | bottom-left | bottom-right | null=custom
+  numberStyle          String  @default("circle")   // circle | square | badge | minimal
+  numberBgColor        String? // null = использовать primaryColor
+  numberFontColor      String  @default("#FFFFFF")
+  numberFontSize       Int     @default(24)
+  
+  // ========== ПРОГРЕСС-БАР ==========
+  showProgressBar      Boolean @default(true)
+  progressBarPosition  String  @default("bottom") // top | bottom
+  progressBarColor     String? // null = использовать primaryColor
+  progressBarHeight    Int     @default(4)
+  
+  // ========== ПРИЗЫВ К ДЕЙСТВИЮ (CTA) ==========
+  showCTA              Boolean @default(true)
+  ctaPositionX         Float   @default(50)  // % от ширины (центр)
+  ctaPositionY         Float   @default(90)  // % от высоты (снизу)
+  ctaDirection         String  @default("horizontal") // horizontal | vertical
+  ctaGap               Int     @default(8)   // Расстояние между элементами в px
+  ctaItems             String  @default("[]") // JSON массив элементов CTA
+  // Структура ctaItem: { icon, iconSize?, imageSize?, imagePath?, text?, textPosition?, bgColor?, textColor? }
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  channel     YouTubeChannel? @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  overlays    TemplateOverlay[]
+  videos      Video[]
+}
+
+// Картинки-оверлеи для шаблона
+model TemplateOverlay {
+  id          String   @id @default(uuid())
+  templateId  String
+  name        String   // Название для удобства
+  imagePath   String   // Путь к загруженной картинке
+  
+  // Позиционирование (в процентах от размера видео)
+  positionX   Float    @default(50)  // 0-100
+  positionY   Float    @default(50)  // 0-100
+  positionPreset String? // top-left | top-right | bottom-left | bottom-right | center | null=custom
+  width       Float    @default(20)  // Ширина в % от ширины видео
+  height      Float?   // Высота в % (null = auto, сохранять пропорции)
+  keepAspectRatio Boolean @default(true) // Сохранять пропорции
+  rotation    Float    @default(0)   // Угол поворота в градусах
+  opacity     Float    @default(1)   // Прозрачность 0-1
+  
+  // Z-index для наложения (порядок слоёв)
+  zIndex      Int      @default(10)
+  
+  // JSON конфиг появления на разных частях видео
+  // Структура: { intro: { show: true, animation: "fadeIn" }, segments: { show: true, animation: null }, outro: { show: false } }
+  appearanceConfig String @default("{\"intro\":{\"show\":false,\"animation\":null},\"segments\":{\"show\":true,\"animation\":null},\"outro\":{\"show\":false,\"animation\":null}}")
+  
+  createdAt   DateTime @default(now())
+  
+  template    VideoTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+}
+
+

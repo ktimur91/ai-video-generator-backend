@@ -711,42 +711,106 @@ router.post("/approve/:id", async (req, res) => {
       }
     }
 
-    // Аудио готово, можно рендерить
+    // Аудио готово, сохраняем сегменты и сразу запускаем рендер
     progress = createProgress(
       "success",
       "success",
       "success",
       "success",
-      "waiting",
+      "pending", // Рендер сразу начинается
     );
     await updateVideoProgress(
       video.id,
       {
         segments: JSON.stringify(segments),
-        status: "PENDING",
+        status: "RENDERING",
+      },
+      progress,
+    );
+
+    // ========== ШАГ 5: Автоматический рендер ==========
+    console.log("Step 5: Auto-starting render...");
+
+    // Проверка остановки перед рендером
+    if (isGenerationAborted(video.id)) {
+      cleanupGeneration(video.id);
+      await updateVideoProgress(
+        video.id,
+        {
+          status: "PENDING",
+        },
+        createProgress("success", "success", "success", "success", "waiting"),
+      );
+      return res.json({
+        success: true,
+        message: "Generation stopped by user before render",
+        stopped: true,
+      });
+    }
+
+    // Получаем обновленное видео из базы для рендера
+    const videoForRender = await prisma.video.findUnique({ where: { id } });
+
+    // Запускаем рендеринг
+    const videoPath = await renderVideo({
+      ...videoForRender,
+      segments: segments, // Используем уже готовые сегменты
+    });
+
+    // Обновляем запись с путем к видео и статусом COMPLETED
+    progress = createProgress(
+      "success",
+      "success",
+      "success",
+      "success",
+      "success",
+    );
+    const updatedVideo = await updateVideoProgress(
+      video.id,
+      {
+        videoPath,
+        status: "COMPLETED",
       },
       progress,
     );
 
     cleanupGeneration(video.id);
 
-    // Получаем обновленное видео из базы
-    const updatedVideo = await prisma.video.findUnique({ where: { id } });
-
     res.json({
       success: true,
-      message: "Audio generated successfully. Ready for rendering.",
+      message: "Video approved, audio generated, and rendered successfully.",
       video: {
         ...updatedVideo,
         segments,
         progress,
-        status: "PENDING",
       },
     });
   } catch (error) {
-    console.error("Approve/Audio generation error:", error);
+    console.error("Approve/Audio/Render error:", error);
+
+    // Определяем на каком шаге произошла ошибка
+    const failedProgress = createProgress(
+      "success",
+      "success",
+      "success",
+      "success",
+      "failed",
+    );
+
+    try {
+      await prisma.video.update({
+        where: { id },
+        data: {
+          status: "FAILED",
+          progress: JSON.stringify(failedProgress),
+        },
+      });
+    } catch (e) {
+      // ignore
+    }
+
     res.status(500).json({
-      error: "Audio generation failed",
+      error: "Generation failed",
       message: error.message,
     });
   }

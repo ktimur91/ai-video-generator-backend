@@ -39,11 +39,47 @@ model Video {
   youtubeUrl         String?     // URL видео на YouTube
   youtubeStatus      String?     // Статус: private, public, unlisted
   publishedAt        DateTime?   // Дата публикации
+  youtubeChannelId   String?     // ID канала на который опубликовано
   
   // Настройки голоса
   voiceConfigId      String?     // ID выбранного голоса
 
   createdAt          DateTime    @default(now())
+  
+  youtubeChannel     YouTubeChannel? @relation(fields: [youtubeChannelId], references: [id])
+  videoVersions      VideoVersion[]
+}
+
+// YouTube OAuth Credentials (для разных Google аккаунтов)
+model YouTubeCredentials {
+  id           String   @id @default(uuid())
+  name         String   // Название для удобства (например "Личный аккаунт", "Рабочий")
+  clientId     String   // OAuth Client ID
+  clientSecret String   // OAuth Client Secret
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  channels     YouTubeChannel[]
+}
+
+// YouTube каналы (для мультиканальности)
+model YouTubeChannel {
+  id              String   @id @default(uuid())
+  channelId       String   @unique  // ID канала на YouTube (UCxxxx)
+  title           String            // Название канала
+  thumbnail       String?           // URL аватарки
+  subscriberCount String?           // Количество подписчиков
+  credentialsId   String?           // Ссылка на credentials (опционально для совместимости)
+  accessToken     String            // OAuth access token
+  refreshToken    String?           // OAuth refresh token
+  tokenExpiry     DateTime?         // Когда истекает токен
+  email           String?           // Email Google аккаунта
+  isDefault       Boolean  @default(false) // Канал по умолчанию
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  credentials     YouTubeCredentials? @relation(fields: [credentialsId], references: [id], onDelete: Cascade)
+  videos          Video[]
 }
 
 model VoiceConfig {
@@ -71,6 +107,7 @@ model VideoVersion {
   isActive                Boolean  @default(false) // Активная версия для публикации
   createdAt               DateTime @default(now())
 
+  video                   Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
   voiceConfig             VoiceConfig? @relation(fields: [voiceConfigId], references: [id])
 
   @@unique([videoId, version])

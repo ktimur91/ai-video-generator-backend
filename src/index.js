@@ -6,6 +6,7 @@ const path = require("path");
 const videosRoutes = require("./routes/videos.routes");
 const voicesRoutes = require("./routes/voices.routes");
 const musicRoutes = require("./routes/music.routes");
+const youtubeRoutes = require("./routes/youtube.routes");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -22,6 +23,7 @@ app.use("/storage", express.static(path.join(__dirname, "../storage")));
 app.use("/api", videosRoutes);
 app.use("/api/voices", voicesRoutes);
 app.use("/api/music", musicRoutes);
+app.use("/api/youtube", youtubeRoutes);
 
 // Health check
 app.get("/health", (req, res) => {

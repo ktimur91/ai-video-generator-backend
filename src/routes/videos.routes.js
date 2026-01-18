@@ -56,7 +56,7 @@ const createProgress = (
   searchVideos = "waiting",
   awaitingReview = "waiting",
   generateAudio = "waiting",
-  renderVideo = "waiting"
+  renderVideo = "waiting",
 ) => ({
   generateScript,
   searchVideos,
@@ -126,7 +126,7 @@ router.post("/generate", async (req, res) => {
   console.log(
     `[VideoSource] Using ${videoSource} for video search${
       useAIVideoSelection ? " with AI video selection" : ""
-    }${useAIMusicSelection ? " with AI music selection" : ""}`
+    }${useAIMusicSelection ? " with AI music selection" : ""}`,
   );
 
   let video = null;
@@ -155,7 +155,7 @@ router.post("/generate", async (req, res) => {
       "waiting",
       "waiting",
       "waiting",
-      "waiting"
+      "waiting",
     );
     video = await updateVideoProgress(video.id, {}, progress);
 
@@ -220,7 +220,7 @@ router.post("/generate", async (req, res) => {
           hashtags: JSON.stringify(hashtags),
           status: "PENDING",
         },
-        createProgress("success", "waiting", "waiting", "waiting", "waiting")
+        createProgress("success", "waiting", "waiting", "waiting", "waiting"),
       );
       return res.json({
         success: true,
@@ -235,7 +235,7 @@ router.post("/generate", async (req, res) => {
       "pending",
       "waiting",
       "waiting",
-      "waiting"
+      "waiting",
     );
     video = await updateVideoProgress(
       video.id,
@@ -246,7 +246,7 @@ router.post("/generate", async (req, res) => {
         tags: JSON.stringify(tags),
         hashtags: JSON.stringify(hashtags),
       },
-      progress
+      progress,
     );
 
     // ========== ШАГ 2: Подбор видео фонов + музыки ==========
@@ -262,7 +262,7 @@ router.post("/generate", async (req, res) => {
 
       if (keywords.length > 0) {
         console.log(
-          `[Segment ${i}] Searching video with keywords: ${keywords.join(", ")}`
+          `[Segment ${i}] Searching video with keywords: ${keywords.join(", ")}`,
         );
 
         // Если включен AI-выбор и доступна функция для этого источника
@@ -280,7 +280,7 @@ router.post("/generate", async (req, res) => {
               segment.text,
               videoOptions,
               usedVideoIds,
-              segment.estimatedDuration
+              segment.estimatedDuration,
             );
 
             // Записываем выбранные видео с процентами
@@ -344,12 +344,12 @@ router.post("/generate", async (req, res) => {
         if (useAIMusicSelection) {
           // AI анализирует треки и выбирает лучший
           console.log(
-            `[Music] AI selecting best track from ${musicTracks.length} options...`
+            `[Music] AI selecting best track from ${musicTracks.length} options...`,
           );
           selectedTrack = await selectBestTrack(
             topic,
             aiResult.title,
-            musicTracks
+            musicTracks,
           );
         } else {
           // Берём первый (наиболее популярный) трек
@@ -373,12 +373,12 @@ router.post("/generate", async (req, res) => {
             source: "jamendo",
           };
           console.log(
-            `[Music] Selected: "${selectedTrack.name}" by ${selectedTrack.artist}`
+            `[Music] Selected: "${selectedTrack.name}" by ${selectedTrack.artist}`,
           );
         }
       } else {
         console.log(
-          `[Music] No tracks found, video will have no background music`
+          `[Music] No tracks found, video will have no background music`,
         );
       }
     } catch (musicError) {
@@ -399,7 +399,7 @@ router.post("/generate", async (req, res) => {
           backgroundMusicData: bgMusic ? JSON.stringify(bgMusic) : null,
           status: "PENDING",
         },
-        createProgress("success", "success", "waiting", "waiting", "waiting")
+        createProgress("success", "success", "waiting", "waiting", "waiting"),
       );
       return res.json({
         success: true,
@@ -415,7 +415,7 @@ router.post("/generate", async (req, res) => {
       "success",
       "pending",
       "waiting",
-      "waiting"
+      "waiting",
     );
 
     const videoData = {
@@ -517,8 +517,8 @@ router.post("/approve/:id", async (req, res) => {
         ? JSON.parse(updatedSegments)
         : updatedSegments
       : typeof video.segments === "string"
-      ? JSON.parse(video.segments)
-      : video.segments;
+        ? JSON.parse(video.segments)
+        : video.segments;
 
     // Обновляем backgroundMusicData и voiceConfigId если переданы
     const updateData = {};
@@ -570,6 +570,25 @@ router.post("/approve/:id", async (req, res) => {
     // Начинаем отслеживание генерации
     startGeneration(video.id);
 
+    // Получаем старые сегменты для сравнения текста
+    const oldSegments = video.segments
+      ? typeof video.segments === "string"
+        ? JSON.parse(video.segments)
+        : video.segments
+      : [];
+
+    // Создаем карту старых сегментов по типу/номеру для быстрого поиска
+    const oldSegmentsMap = new Map();
+    oldSegments.forEach((seg, idx) => {
+      const key =
+        seg.type === "intro"
+          ? "intro"
+          : seg.type === "outro"
+            ? "outro"
+            : `segment_${seg.number || idx}`;
+      oldSegmentsMap.set(key, seg);
+    });
+
     // ========== ШАГ 4: Генерация аудио ==========
     console.log("Step 4: Generating audio for all segments...");
     let progress = createProgress(
@@ -577,12 +596,12 @@ router.post("/approve/:id", async (req, res) => {
       "success",
       "success",
       "pending",
-      "waiting"
+      "waiting",
     );
     await updateVideoProgress(
       video.id,
       { status: "GENERATING_ASSETS" },
-      progress
+      progress,
     );
 
     // Генерируем аудио для каждого сегмента
@@ -598,7 +617,7 @@ router.post("/approve/:id", async (req, res) => {
             segments: JSON.stringify(segments),
             status: "PENDING",
           },
-          createProgress("success", "success", "success", "waiting", "waiting")
+          createProgress("success", "success", "success", "waiting", "waiting"),
         );
         return res.json({
           success: true,
@@ -607,18 +626,67 @@ router.post("/approve/:id", async (req, res) => {
         });
       }
 
+      // Определяем ключ сегмента для поиска старого
+      const segmentKey =
+        segment.type === "intro"
+          ? "intro"
+          : segment.type === "outro"
+            ? "outro"
+            : `segment_${segment.number || i}`;
+
+      const oldSegment = oldSegmentsMap.get(segmentKey);
+
+      // Проверяем, изменился ли текст
+      const textChanged = !oldSegment || oldSegment.text !== segment.text;
+      const hasExistingAudio = segment.audioPath && !textChanged;
+
+      if (hasExistingAudio) {
+        // Текст не изменился, переиспользуем существующее аудио
+        // Также копируем audioDuration и wordTimings из старого сегмента если они есть
+        if (oldSegment) {
+          if (!segments[i].audioDuration && oldSegment.audioDuration) {
+            segments[i].audioDuration = oldSegment.audioDuration;
+          }
+          if (!segments[i].wordTimings && oldSegment.wordTimings) {
+            segments[i].wordTimings = oldSegment.wordTimings;
+          }
+        }
+        console.log(
+          `[Audio] Segment ${i + 1}/${segments.length} (${segment.type}): text unchanged, reusing existing audio`,
+        );
+        continue;
+      }
+
+      // Если текст изменился и есть старый аудио файл - удаляем его
+      if (textChanged && oldSegment?.audioPath) {
+        try {
+          const oldAudioPath = path.join(
+            __dirname,
+            "../..",
+            oldSegment.audioPath,
+          );
+          await fs.unlink(oldAudioPath);
+          console.log(
+            `[Audio] Deleted old audio file: ${oldSegment.audioPath}`,
+          );
+        } catch (err) {
+          // Файл мог уже не существовать
+          console.log(`[Audio] Could not delete old audio: ${err.message}`);
+        }
+      }
+
       console.log(
         `[Audio] Generating for segment ${i + 1}/${segments.length}: ${
           segment.type
-        }`
+        }${textChanged ? " (text changed)" : ""}`,
       );
 
       const segmentId =
         segment.type === "intro"
           ? `${video.id}_intro`
           : segment.type === "outro"
-          ? `${video.id}_outro`
-          : `${video.id}_segment_${segment.number || i}`;
+            ? `${video.id}_outro`
+            : `${video.id}_segment_${segment.number || i}`;
 
       // Передаём настройки голоса в generateAudio
       const audio = await generateAudio(segment.text, segmentId, voiceConfig);
@@ -635,7 +703,7 @@ router.post("/approve/:id", async (req, res) => {
         const wordTimings = await transcribeWithTimings(fullAudioPath);
         segments[i].wordTimings = wordTimings;
         console.log(
-          `[Whisper] Segment ${i + 1}: ${wordTimings.length} words with timings`
+          `[Whisper] Segment ${i + 1}: ${wordTimings.length} words with timings`,
         );
       } catch (err) {
         console.error(`[Whisper] Failed for segment ${i + 1}:`, err.message);
@@ -649,7 +717,7 @@ router.post("/approve/:id", async (req, res) => {
       "success",
       "success",
       "success",
-      "waiting"
+      "waiting",
     );
     await updateVideoProgress(
       video.id,
@@ -657,7 +725,7 @@ router.post("/approve/:id", async (req, res) => {
         segments: JSON.stringify(segments),
         status: "PENDING",
       },
-      progress
+      progress,
     );
 
     cleanupGeneration(video.id);
@@ -758,7 +826,7 @@ router.post("/topic-suggestions", async (req, res) => {
   try {
     const { category } = req.body;
     console.log(
-      `[API] Generating topic suggestions for: "${category || "general"}"`
+      `[API] Generating topic suggestions for: "${category || "general"}"`,
     );
 
     const result = await generateTopicSuggestions(category);
@@ -863,13 +931,73 @@ router.post("/render/:id", async (req, res) => {
       ? JSON.parse(video.progress)
       : createProgress("success", "success", "success", "success", "waiting");
 
+    // Проверяем, есть ли уже отрендеренное видео (перерендер)
+    const isRerender = !!video.videoPath;
+    let savedVersionNumber = null;
+
+    if (isRerender) {
+      // Сохраняем СТАРОЕ видео как версию перед новым рендером
+      const lastVersion = await prisma.videoVersion.findFirst({
+        where: { videoId: id },
+        orderBy: { version: "desc" },
+      });
+      const newVersionNumber = lastVersion ? lastVersion.version + 1 : 1;
+
+      // Создаем путь для сохранения старой версии
+      const versionedVideoPath = `storage/videos/${id}_v${newVersionNumber}.mp4`;
+      const absoluteOldVideoPath = path.join(
+        __dirname,
+        "../..",
+        video.videoPath,
+      );
+      const absoluteVersionedPath = path.join(
+        __dirname,
+        "../..",
+        versionedVideoPath,
+      );
+
+      // Копируем старый файл в версию
+      try {
+        await fs.copyFile(absoluteOldVideoPath, absoluteVersionedPath);
+        console.log(
+          `Saved old video as version ${newVersionNumber}: ${versionedVideoPath}`,
+        );
+
+        // Деактивируем все предыдущие версии
+        await prisma.videoVersion.updateMany({
+          where: { videoId: id },
+          data: { isActive: false },
+        });
+
+        // Создаем запись версии для СТАРОГО видео
+        await prisma.videoVersion.create({
+          data: {
+            videoId: id,
+            version: newVersionNumber,
+            videoPath: versionedVideoPath,
+            segments: video.segments,
+            voiceConfigId: video.voiceConfigId,
+            backgroundMusicFilename: video.backgroundMusicFilename,
+            isActive: false, // Старая версия неактивна
+          },
+        });
+
+        savedVersionNumber = newVersionNumber;
+        console.log(
+          `Created version ${newVersionNumber} from old video for ${id}`,
+        );
+      } catch (err) {
+        console.error(`Failed to save old video as version:`, err);
+      }
+    }
+
     // Обновляем статус на RENDERING и прогресс
     progress = createProgress(
       "success",
       "success",
       "success",
       "success",
-      "pending"
+      "pending",
     );
     await updateVideoProgress(id, { status: "RENDERING" }, progress);
 
@@ -877,54 +1005,13 @@ router.post("/render/:id", async (req, res) => {
     console.log(`Starting render for video: ${id}`);
     const videoPath = await renderVideo(video);
 
-    // Определяем номер версии
-    const lastVersion = await prisma.videoVersion.findFirst({
-      where: { videoId: id },
-      orderBy: { version: "desc" },
-    });
-    const newVersionNumber = lastVersion ? lastVersion.version + 1 : 1;
-
-    // Создаем уникальный путь для версии
-    const versionedVideoPath = `storage/videos/${id}_v${newVersionNumber}.mp4`;
-    const absoluteVideoPath = path.join(__dirname, "../..", videoPath);
-    const absoluteVersionedPath = path.join(
-      __dirname,
-      "../..",
-      versionedVideoPath
-    );
-
-    // Копируем файл с новым именем для версии
-    await fs.copyFile(absoluteVideoPath, absoluteVersionedPath);
-    console.log(`Copied video to versioned path: ${versionedVideoPath}`);
-
-    // Деактивируем все предыдущие версии
-    await prisma.videoVersion.updateMany({
-      where: { videoId: id },
-      data: { isActive: false },
-    });
-
-    // Создаем новую версию с уникальным путём
-    await prisma.videoVersion.create({
-      data: {
-        videoId: id,
-        version: newVersionNumber,
-        videoPath: versionedVideoPath,
-        segments: video.segments,
-        voiceConfigId: video.voiceConfigId,
-        backgroundMusicFilename: video.backgroundMusicFilename,
-        isActive: true,
-      },
-    });
-
-    console.log(`Created video version ${newVersionNumber} for video ${id}`);
-
     // Обновляем запись с путем к видео и статусом COMPLETED
     progress = createProgress(
       "success",
       "success",
       "success",
       "success",
-      "success"
+      "success",
     );
     const updatedVideo = await updateVideoProgress(
       id,
@@ -932,13 +1019,15 @@ router.post("/render/:id", async (req, res) => {
         videoPath,
         status: "COMPLETED",
       },
-      progress
+      progress,
     );
 
     res.json({
       success: true,
-      message: "Video rendered successfully",
-      version: newVersionNumber,
+      message: isRerender
+        ? `Video re-rendered. Old version saved as v${savedVersionNumber}`
+        : "Video rendered successfully",
+      savedVersion: savedVersionNumber,
       video: {
         ...updatedVideo,
         progress: JSON.parse(updatedVideo.progress),
@@ -953,7 +1042,7 @@ router.post("/render/:id", async (req, res) => {
       "success",
       "success",
       "success",
-      "failed"
+      "failed",
     );
     await prisma.video
       .update({
@@ -981,12 +1070,26 @@ router.get("/videos", async (req, res) => {
   try {
     const videos = await prisma.video.findMany({
       orderBy: { createdAt: "desc" },
+      include: {
+        youtubeChannel: {
+          select: {
+            id: true,
+            title: true,
+            thumbnail: true,
+          },
+        },
+        _count: {
+          select: { videoVersions: true },
+        },
+      },
     });
 
-    // Парсим progress для каждого видео
+    // Парсим progress для каждого видео и добавляем versionsCount
     const videosWithParsedProgress = videos.map((video) => ({
       ...video,
       progress: video.progress ? JSON.parse(video.progress) : null,
+      versionsCount: video._count?.videoVersions || 0,
+      _count: undefined,
     }));
 
     res.json({
@@ -1045,7 +1148,7 @@ router.delete("/videos/:id", async (req, res) => {
     // Получаем видео и все его версии перед удалением
     const video = await prisma.video.findUnique({
       where: { id },
-      include: { versions: true },
+      include: { videoVersions: true },
     });
 
     if (!video) {
@@ -1081,7 +1184,7 @@ router.delete("/videos/:id", async (req, res) => {
     }
 
     // 3. Все версии видео
-    for (const version of video.versions || []) {
+    for (const version of video.videoVersions || []) {
       if (version.videoPath) {
         filesToDelete.push(path.join(__dirname, "../..", version.videoPath));
       }
@@ -1094,6 +1197,19 @@ router.delete("/videos/:id", async (req, res) => {
       for (const file of previewFiles) {
         if (file.startsWith(id)) {
           filesToDelete.push(path.join(previewDir, file));
+        }
+      }
+    } catch (err) {
+      // Папка может не существовать
+    }
+
+    // 5. Голосовые превью
+    try {
+      const voicePreviewDir = path.join(storageDir, "voice-previews");
+      const voicePreviewFiles = await fs.readdir(voicePreviewDir);
+      for (const file of voicePreviewFiles) {
+        if (file.startsWith(id)) {
+          filesToDelete.push(path.join(voicePreviewDir, file));
         }
       }
     } catch (err) {
@@ -1264,7 +1380,7 @@ router.post("/retry/:id", async (req, res) => {
         "waiting",
         "waiting",
         "waiting",
-        "waiting"
+        "waiting",
       );
       video = await updateVideoProgress(video.id, {}, progress);
 
@@ -1308,7 +1424,7 @@ router.post("/retry/:id", async (req, res) => {
         "pending",
         "waiting",
         "waiting",
-        "waiting"
+        "waiting",
       );
       video = await updateVideoProgress(
         video.id,
@@ -1319,7 +1435,7 @@ router.post("/retry/:id", async (req, res) => {
           tags: JSON.stringify(tags),
           hashtags: JSON.stringify(hashtags),
         },
-        progress
+        progress,
       );
     }
 
@@ -1332,14 +1448,14 @@ router.post("/retry/:id", async (req, res) => {
           "pending",
           "waiting",
           "waiting",
-          "waiting"
+          "waiting",
         );
         video = await updateVideoProgress(video.id, {}, progress);
       }
 
       // Получаем сегменты для поиска (только те что без stockVideo)
       const segmentsToSearch = segments.filter(
-        (s) => !s.stockVideo && s.searchKeywords
+        (s) => !s.stockVideo && s.searchKeywords,
       );
       if (segmentsToSearch.length > 0) {
         const updatedSegments = await findVideosForSegments(segmentsToSearch);
@@ -1355,7 +1471,7 @@ router.post("/retry/:id", async (req, res) => {
         "success",
         "pending",
         "waiting",
-        "waiting"
+        "waiting",
       );
 
       // Если начали с шага 1 или 2, останавливаемся на AWAITING_REVIEW для проверки
@@ -1366,7 +1482,7 @@ router.post("/retry/:id", async (req, res) => {
             segments: JSON.stringify(segments),
             status: "AWAITING_REVIEW",
           },
-          progress
+          progress,
         );
 
         return res.json({
@@ -1386,7 +1502,7 @@ router.post("/retry/:id", async (req, res) => {
         {
           segments: JSON.stringify(segments),
         },
-        progress
+        progress,
       );
     }
 
@@ -1399,18 +1515,18 @@ router.post("/retry/:id", async (req, res) => {
           "success",
           "pending",
           "waiting",
-          "waiting"
+          "waiting",
         );
         video = await updateVideoProgress(video.id, {}, progress);
       }
 
       // Генерируем аудио только для сегментов без аудио
       const factSegments = segments.filter(
-        (s) => s.type !== "intro" && s.type !== "outro"
+        (s) => s.type !== "intro" && s.type !== "outro",
       );
       const segmentsWithAudio = await generateSegmentsAudio(
         factSegments.filter((s) => !s.audioPath),
-        video.id
+        video.id,
       );
 
       // Обновляем сегменты
@@ -1424,14 +1540,14 @@ router.post("/retry/:id", async (req, res) => {
         "success",
         "success",
         "pending",
-        "waiting"
+        "waiting",
       );
       video = await updateVideoProgress(
         video.id,
         {
           segments: JSON.stringify(segments),
         },
-        progress
+        progress,
       );
     }
 
@@ -1444,7 +1560,7 @@ router.post("/retry/:id", async (req, res) => {
           "success",
           "success",
           "pending",
-          "waiting"
+          "waiting",
         );
         video = await updateVideoProgress(video.id, {}, progress);
       }
@@ -1456,7 +1572,7 @@ router.post("/retry/:id", async (req, res) => {
       if (!hasIntro) {
         const introAudio = await generateAudio(
           "Привет! Смотри интересные факты!",
-          `${video.id}_intro`
+          `${video.id}_intro`,
         );
         segments.unshift({
           type: "intro",
@@ -1469,7 +1585,7 @@ router.post("/retry/:id", async (req, res) => {
       if (!hasOutro) {
         const outroAudio = await generateAudio(
           "Подпишись на канал!",
-          `${video.id}_outro`
+          `${video.id}_outro`,
         );
         segments.push({
           type: "outro",
@@ -1484,7 +1600,7 @@ router.post("/retry/:id", async (req, res) => {
         "success",
         "success",
         "success",
-        "waiting"
+        "waiting",
       );
       video = await updateVideoProgress(
         video.id,
@@ -1492,7 +1608,7 @@ router.post("/retry/:id", async (req, res) => {
           segments: JSON.stringify(segments),
           status: "PENDING",
         },
-        progress
+        progress,
       );
     }
 
@@ -1504,12 +1620,12 @@ router.post("/retry/:id", async (req, res) => {
         "success",
         "success",
         "success",
-        "pending"
+        "pending",
       );
       video = await updateVideoProgress(
         video.id,
         { status: "RENDERING" },
-        progress
+        progress,
       );
 
       const videoPath = await renderVideo(video);
@@ -1527,13 +1643,13 @@ router.post("/retry/:id", async (req, res) => {
       const absoluteVersionedPath = path.join(
         __dirname,
         "../..",
-        versionedVideoPath
+        versionedVideoPath,
       );
 
       // Копируем файл с новым именем для версии
       await fs.copyFile(absoluteVideoPath, absoluteVersionedPath);
       console.log(
-        `[Retry] Copied video to versioned path: ${versionedVideoPath}`
+        `[Retry] Copied video to versioned path: ${versionedVideoPath}`,
       );
 
       // Деактивируем все предыдущие версии
@@ -1556,7 +1672,7 @@ router.post("/retry/:id", async (req, res) => {
       });
 
       console.log(
-        `[Retry] Created video version ${newVersionNumber} for video ${id}`
+        `[Retry] Created video version ${newVersionNumber} for video ${id}`,
       );
 
       progress = createProgress(
@@ -1564,7 +1680,7 @@ router.post("/retry/:id", async (req, res) => {
         "success",
         "success",
         "success",
-        "success"
+        "success",
       );
       video = await updateVideoProgress(
         video.id,
@@ -1572,7 +1688,7 @@ router.post("/retry/:id", async (req, res) => {
           videoPath,
           status: "COMPLETED",
         },
-        progress
+        progress,
       );
     }
 
@@ -1677,7 +1793,7 @@ router.get("/search-videos", async (req, res) => {
         process.env.PIXABAY_API_KEY || "54210869-6670fd220da2b2c1de7759e59";
 
       console.log(
-        `[Pixabay Search] Query: ${keywords[0]}, Page: ${pageNum}, VerticalOnly: ${isVerticalOnly}`
+        `[Pixabay Search] Query: ${keywords[0]}, Page: ${pageNum}, VerticalOnly: ${isVerticalOnly}`,
       );
 
       const response = await axios.get("https://pixabay.com/api/videos/", {
@@ -1695,7 +1811,7 @@ router.get("/search-videos", async (req, res) => {
       console.log(
         `[Pixabay Search] Found ${
           response.data.hits?.length || 0
-        } videos, total: ${totalHits}`
+        } videos, total: ${totalHits}`,
       );
 
       let filteredVideos = (response.data.hits || []).filter((v) => {
@@ -1732,7 +1848,7 @@ router.get("/search-videos", async (req, res) => {
 
       hasMore = filteredVideos.length > perPage || pageNum * 100 < totalHits;
       console.log(
-        `[Pixabay Search] Final videos: ${videos.length}, hasMore: ${hasMore}`
+        `[Pixabay Search] Final videos: ${videos.length}, hasMore: ${hasMore}`,
       );
     } else if (source === "klipy") {
       // Klipy API для клипов (cursor-based pagination)
@@ -1741,7 +1857,7 @@ router.get("/search-videos", async (req, res) => {
       console.log(
         `[Klipy Search] Query: ${keywords[0]}, Page: ${pageNum}, Pos: ${
           pos || "none"
-        }`
+        }`,
       );
 
       const result = await searchClips(keywords[0], {
@@ -1762,7 +1878,7 @@ router.get("/search-videos", async (req, res) => {
         "js7zzQQH8u0HaLesjtFvn9WOBSpgwH6rXXvtqFSCANXiQQvovLTeTMjO";
 
       console.log(
-        `[Pexels Search] Query: ${keywords[0]}, Page: ${pageNum}, VerticalOnly: ${isVerticalOnly}`
+        `[Pexels Search] Query: ${keywords[0]}, Page: ${pageNum}, VerticalOnly: ${isVerticalOnly}`,
       );
 
       const response = await axios.get("https://api.pexels.com/videos/search", {
@@ -1936,7 +2052,7 @@ router.post("/videos/:id/regenerate", async (req, res) => {
     console.log(
       `[Regenerate] voiceConfigId: ${voiceConfigId}, backgroundMusicData: ${
         backgroundMusicData ? "provided" : "none"
-      }`
+      }`,
     );
 
     // Получаем конфиг голоса если указан
@@ -1959,8 +2075,8 @@ router.post("/videos/:id/regenerate", async (req, res) => {
         ? JSON.parse(inputSegments)
         : inputSegments
       : typeof video.segments === "string"
-      ? JSON.parse(video.segments)
-      : video.segments;
+        ? JSON.parse(video.segments)
+        : video.segments;
 
     // Подготавливаем данные для обновления
     const updateData = {
@@ -1997,7 +2113,7 @@ router.post("/videos/:id/regenerate", async (req, res) => {
       "success",
       "success",
       "pending",
-      "waiting"
+      "waiting",
     );
     await updateVideoProgress(id, updateData, progress);
 
@@ -2016,21 +2132,21 @@ router.post("/videos/:id/regenerate", async (req, res) => {
           console.log(
             `[Regenerate] Audio ${i + 1}/${segments.length}: ${
               segment.type || "content"
-            }`
+            }`,
           );
 
           const segmentId =
             segment.type === "intro"
               ? `${id}_intro`
               : segment.type === "outro"
-              ? `${id}_outro`
-              : `${id}_segment_${segment.number || i}`;
+                ? `${id}_outro`
+                : `${id}_segment_${segment.number || i}`;
 
           // Передаём настройки голоса в generateAudio
           const audio = await generateAudio(
             segment.text,
             segmentId,
-            voiceConfig
+            voiceConfig,
           );
           segments[i].audioPath = audio.path;
           segments[i].audioDuration = audio.duration;
@@ -2045,12 +2161,12 @@ router.post("/videos/:id/regenerate", async (req, res) => {
             const wordTimings = await transcribeWithTimings(fullAudioPath);
             segments[i].wordTimings = wordTimings;
             console.log(
-              `[Regenerate] Whisper ${i + 1}: ${wordTimings.length} words`
+              `[Regenerate] Whisper ${i + 1}: ${wordTimings.length} words`,
             );
           } catch (err) {
             console.error(
               `[Regenerate] Whisper failed for ${i + 1}:`,
-              err.message
+              err.message,
             );
             segments[i].wordTimings = [];
           }
@@ -2062,7 +2178,7 @@ router.post("/videos/:id/regenerate", async (req, res) => {
           "success",
           "success",
           "success",
-          "waiting"
+          "waiting",
         );
         await updateVideoProgress(
           id,
@@ -2070,7 +2186,7 @@ router.post("/videos/:id/regenerate", async (req, res) => {
             segments: JSON.stringify(segments),
             status: "PENDING",
           },
-          progress
+          progress,
         );
 
         console.log(`[Regenerate] Audio generation complete, ready for render`);
@@ -2081,7 +2197,7 @@ router.post("/videos/:id/regenerate", async (req, res) => {
           "success",
           "success",
           "failed",
-          "waiting"
+          "waiting",
         );
         await prisma.video.update({
           where: { id },
@@ -2184,214 +2300,6 @@ router.post("/videos/:id/versions/:version/activate", async (req, res) => {
     console.error("Error activating version:", error);
     res.status(500).json({
       error: "Failed to activate version",
-      message: error.message,
-    });
-  }
-});
-
-// ============================================================
-// YOUTUBE API ROUTES
-// ============================================================
-
-const youtubeService = require("../services/youtube.service");
-
-/**
- * GET /youtube/status
- * Проверка статуса авторизации YouTube
- */
-router.get("/youtube/status", async (req, res) => {
-  try {
-    const isAuthenticated = youtubeService.isAuthenticated();
-    console.log("[YouTube Status] isAuthenticated:", isAuthenticated);
-
-    if (isAuthenticated) {
-      try {
-        const channel = await youtubeService.getChannelInfo();
-        console.log("[YouTube Status] channel:", channel);
-        res.json({
-          authenticated: true,
-          channel,
-        });
-      } catch (error) {
-        // Токен невалидный, нужна повторная авторизация
-        console.error("[YouTube Status] getChannelInfo error:", error.message);
-        res.json({
-          authenticated: false,
-          error: "Token expired or invalid: " + error.message,
-        });
-      }
-    } else {
-      res.json({
-        authenticated: false,
-      });
-    }
-  } catch (error) {
-    res.status(500).json({
-      error: "Failed to check YouTube status",
-      message: error.message,
-    });
-  }
-});
-
-/**
- * GET /youtube/auth
- * Получение URL для авторизации YouTube
- */
-router.get("/youtube/auth", (req, res) => {
-  try {
-    const authUrl = youtubeService.getAuthUrl();
-    res.json({ authUrl });
-  } catch (error) {
-    res.status(500).json({
-      error: "Failed to generate auth URL",
-      message: error.message,
-    });
-  }
-});
-
-/**
- * GET /youtube/callback
- * OAuth2 callback от Google
- */
-router.get("/youtube/callback", async (req, res) => {
-  try {
-    const { code, error } = req.query;
-
-    if (error) {
-      return res.redirect(`http://localhost:5173?youtube_error=${error}`);
-    }
-
-    if (!code) {
-      return res.redirect(`http://localhost:5173?youtube_error=no_code`);
-    }
-
-    await youtubeService.handleAuthCallback(code);
-
-    // Редирект обратно на дашборд с успехом
-    res.redirect(`http://localhost:5173?youtube_connected=true`);
-  } catch (error) {
-    console.error("YouTube OAuth callback error:", error);
-    res.redirect(
-      `http://localhost:5173?youtube_error=${encodeURIComponent(error.message)}`
-    );
-  }
-});
-
-/**
- * POST /youtube/logout
- * Выход из YouTube аккаунта
- */
-router.post("/youtube/logout", (req, res) => {
-  try {
-    youtubeService.logout();
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({
-      error: "Failed to logout",
-      message: error.message,
-    });
-  }
-});
-
-/**
- * POST /videos/:id/publish
- * Публикация видео на YouTube
- */
-router.post("/videos/:id/publish", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const {
-      privacyStatus = "private", // private, public, unlisted
-      customTitle,
-      customDescription,
-      tags = [],
-      categoryId = "24", // Default: Entertainment
-    } = req.body;
-
-    // Проверяем авторизацию
-    if (!youtubeService.isAuthenticated()) {
-      return res.status(401).json({
-        error: "YouTube not authenticated",
-        message: "Please connect your YouTube account first",
-      });
-    }
-
-    // Получаем видео из БД
-    const video = await prisma.video.findUnique({
-      where: { id },
-    });
-
-    if (!video) {
-      return res.status(404).json({ error: "Video not found" });
-    }
-
-    if (!video.videoPath) {
-      return res.status(400).json({
-        error: "Video not rendered",
-        message: "Please wait for video rendering to complete",
-      });
-    }
-
-    // Проверяем что файл существует
-    const fs = require("fs");
-    const path = require("path");
-    const videoPath = path.isAbsolute(video.videoPath)
-      ? video.videoPath
-      : path.join(__dirname, "../../", video.videoPath);
-
-    if (!fs.existsSync(videoPath)) {
-      return res.status(400).json({
-        error: "Video file not found",
-        message: "The rendered video file is missing",
-      });
-    }
-
-    // Формируем описание
-    const description =
-      customDescription || `${video.title}\n\n#shorts #youtube #video`;
-
-    // Получаем теги из видео если не переданы
-    let finalTags = tags;
-    if (finalTags.length === 0 && video.tags) {
-      try {
-        finalTags = JSON.parse(video.tags);
-      } catch {
-        finalTags = ["shorts", "факты", "интересное"];
-      }
-    }
-    if (finalTags.length === 0) {
-      finalTags = ["shorts", "video"];
-    }
-
-    // Загружаем на YouTube
-    const result = await youtubeService.uploadVideo({
-      videoPath,
-      title: customTitle || video.title,
-      description,
-      tags: finalTags,
-      categoryId,
-      privacyStatus,
-    });
-
-    // Обновляем запись в БД
-    await prisma.video.update({
-      where: { id },
-      data: {
-        youtubeId: result.id,
-        youtubeUrl: result.url,
-        youtubeStatus: privacyStatus,
-        publishedAt: new Date(),
-      },
-    });
-
-    res.json({
-      success: true,
-      youtube: result,
-    });
-  } catch (error) {
-    console.error("YouTube publish error:", error);
-    res.status(500).json({
-      error: "Failed to publish video",
       message: error.message,
     });
   }

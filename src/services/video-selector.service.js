@@ -5,16 +5,22 @@ const openai = new OpenAI({
 });
 
 /**
- * Использует GPT-4o Vision для выбора наиболее подходящего видео
+ * Использует GPT-4o Vision для выбора наиболее подходящих видео (одного или нескольких)
  * @param {string} segmentText - Текст сегмента (о чем говорится)
- * @param {Array} videoOptions - Массив видео с превью [{id, thumbnailUrl, ...}]
+ * @param {Array} videoOptions - Массив видео с превью [{id, thumbnailUrl, duration, ...}]
  * @param {Array} excludeIds - Массив ID видео которые нужно исключить (уже использованы)
- * @returns {Promise<object>} - Выбранное видео
+ * @param {number} estimatedDuration - Примерная длительность сегмента в секундах
+ * @returns {Promise<Array>} - Массив выбранных видео с процентами [{...video, percent}, ...]
  */
-async function selectBestVideo(segmentText, videoOptions, excludeIds = []) {
+async function selectBestVideos(
+  segmentText,
+  videoOptions,
+  excludeIds = [],
+  estimatedDuration = 5
+) {
   if (!videoOptions || videoOptions.length === 0) {
     console.log("[VideoSelector] No video options provided");
-    return null;
+    return [];
   }
 
   // Фильтруем уже использованные видео
@@ -26,16 +32,16 @@ async function selectBestVideo(segmentText, videoOptions, excludeIds = []) {
     console.log(
       "[VideoSelector] All videos already used, falling back to first option"
     );
-    return videoOptions[0];
+    return [{ ...videoOptions[0], percent: 100 }];
   }
 
   if (availableVideos.length === 1) {
     console.log("[VideoSelector] Only one available option, selecting it");
-    return availableVideos[0];
+    return [{ ...availableVideos[0], percent: 100 }];
   }
 
   // Ограничиваем количество видео для анализа (экономия токенов)
-  const maxVideosToAnalyze = 6;
+  const maxVideosToAnalyze = 8;
   const videosToAnalyze = availableVideos.slice(0, maxVideosToAnalyze);
 
   console.log(
@@ -54,32 +60,58 @@ async function selectBestVideo(segmentText, videoOptions, excludeIds = []) {
       },
     }));
 
+    // Формируем информацию о длительности каждого видео
+    const videoDurations = videosToAnalyze
+      .map((v, i) => `Видео ${i + 1}: ${v.duration || "неизвестно"} сек`)
+      .join(", ");
+
     const response = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
         {
           role: "system",
-          content: `Ты помощник для выбора фонового видео для YouTube Shorts.
+          content: `Ты помощник для выбора фоновых видео для YouTube Shorts.
 
-Твоя задача: выбрать ОДНО видео, которое лучше всего подходит как ФОНОВОЕ видео для озвученного текста.
+Твоя задача: выбрать ОДНО или НЕСКОЛЬКО видео для фона озвученного текста.
 
-Критерии выбора:
-1. ВИЗУАЛЬНОЕ СООТВЕТСТВИЕ - видео должно иллюстрировать тему текста
-2. АТМОСФЕРА - настроение видео должно соответствовать тексту
-3. НЕ ОТВЛЕКАЮЩЕЕ - видео не должно конкурировать с текстом за внимание
+КОГДА ВЫБИРАТЬ НЕСКОЛЬКО ВИДЕО:
+1. Если лучшее видео слишком короткое (< 3 сек) — добавь похожее
+2. Если текст описывает ПОСЛЕДОВАТЕЛЬНОСТЬ или ПРОЦЕСС — несколько видео показывают этапы
+3. Если текст содержит КОНТРАСТ или СРАВНЕНИЕ — 2 разных видео
+4. Если текст о ПЕРЕХОДЕ (было → стало) — 2 видео
 
-Примеры хорошего выбора:
-- Текст о космосе → видео звезд, планет, галактик
-- Текст о Древнем Риме → видео древних руин, статуй, храмов
-- Текст о боге Аиде → темное видео, подземелье, пещеры, огонь
-- Текст о природе → видео лесов, океанов, животных
+КОГДА ДОСТАТОЧНО ОДНОГО ВИДЕО:
+1. Видео достаточно длинное (> 5 сек)
+2. Текст об одном явлении/объекте
+3. Нет явной необходимости в смене кадра
 
-Примеры ПЛОХОГО выбора:
-- Текст о богах → видео современного города
-- Текст о мифологии → видео танцующей девушки
-- Серьезная тема → слишком яркое/веселое видео
+Критерии выбора каждого видео:
+1. ВИЗУАЛЬНОЕ СООТВЕТСТВИЕ - видео должно иллюстрировать тему
+2. АТМОСФЕРА - настроение должно соответствовать тексту
+3. НЕ ОТВЛЕКАЮЩЕЕ - не должно конкурировать с текстом за внимание
 
-Отвечай ТОЛЬКО номером выбранного видео (1, 2, 3...).`,
+Отвечай ТОЛЬКО в формате JSON:
+{
+  "videos": [
+    {"number": 1, "percent": 100}
+  ],
+  "reason": "краткое объяснение выбора"
+}
+
+Или для нескольких:
+{
+  "videos": [
+    {"number": 2, "percent": 40},
+    {"number": 5, "percent": 60}
+  ],
+  "reason": "Первое видео показывает начало, второе — результат"
+}
+
+ВАЖНО: 
+- Сумма percent ДОЛЖНА быть 100
+- Если одно видео — percent: 100
+- Минимальный percent для видео: 20 (чтобы было заметно)
+- Максимум 3 видео на сегмент`,
         },
         {
           role: "user",
@@ -87,42 +119,105 @@ async function selectBestVideo(segmentText, videoOptions, excludeIds = []) {
             {
               type: "text",
               text: `Текст сегмента: "${segmentText}"
+Примерная длительность сегмента: ~${estimatedDuration} секунд
 
-Вот ${videosToAnalyze.length} вариантов видео (превью):`,
+Доступные видео (${videosToAnalyze.length} штук):
+${videoDurations}
+
+Вот превью видео:`,
             },
             ...imageContents,
             {
               type: "text",
-              text: `Выбери номер видео (от 1 до ${videosToAnalyze.length}), которое лучше всего подходит как фон для этого текста:`,
+              text: `Выбери видео для этого сегмента. Помни: обычно достаточно одного хорошего видео. Несколько видео нужны только если есть веская причина.`,
             },
           ],
         },
       ],
-      max_tokens: 10,
+      max_tokens: 200,
       temperature: 0.3,
+      response_format: { type: "json_object" },
     });
 
     const answer = response.choices[0].message.content.trim();
-    const selectedIndex = parseInt(answer) - 1;
+    const result = JSON.parse(answer);
 
-    if (selectedIndex >= 0 && selectedIndex < videosToAnalyze.length) {
-      console.log(
-        `[VideoSelector] AI selected video #${selectedIndex + 1} (ID: ${
-          videosToAnalyze[selectedIndex].id
-        })`
-      );
-      return videosToAnalyze[selectedIndex];
-    } else {
-      console.log(
-        `[VideoSelector] Invalid AI response: "${answer}", falling back to first video`
-      );
-      return videosToAnalyze[0];
+    if (
+      result.videos &&
+      Array.isArray(result.videos) &&
+      result.videos.length > 0
+    ) {
+      const selectedVideos = [];
+
+      for (const selection of result.videos) {
+        const videoIndex = selection.number - 1;
+        if (videoIndex >= 0 && videoIndex < videosToAnalyze.length) {
+          selectedVideos.push({
+            ...videosToAnalyze[videoIndex],
+            percent:
+              selection.percent || Math.floor(100 / result.videos.length),
+          });
+        }
+      }
+
+      if (selectedVideos.length > 0) {
+        // Нормализуем проценты чтобы сумма была 100
+        const totalPercent = selectedVideos.reduce(
+          (sum, v) => sum + v.percent,
+          0
+        );
+        if (totalPercent !== 100) {
+          const factor = 100 / totalPercent;
+          selectedVideos.forEach(
+            (v) => (v.percent = Math.round(v.percent * factor))
+          );
+          // Корректируем последний элемент чтобы точно было 100
+          const adjustedTotal = selectedVideos.reduce(
+            (sum, v) => sum + v.percent,
+            0
+          );
+          selectedVideos[selectedVideos.length - 1].percent +=
+            100 - adjustedTotal;
+        }
+
+        console.log(
+          `[VideoSelector] AI selected ${
+            selectedVideos.length
+          } video(s): ${selectedVideos
+            .map((v) => `#${v.id} (${v.percent}%)`)
+            .join(", ")}`
+        );
+        console.log(
+          `[VideoSelector] Reason: ${result.reason || "not provided"}`
+        );
+
+        return selectedVideos;
+      }
     }
+
+    // Fallback если парсинг не удался
+    console.log(
+      `[VideoSelector] Invalid AI response, falling back to first video`
+    );
+    return [{ ...videosToAnalyze[0], percent: 100 }];
   } catch (error) {
     console.error("[VideoSelector] AI selection failed:", error.message);
     // Fallback: выбираем первое доступное видео
-    return availableVideos[0];
+    return [{ ...availableVideos[0], percent: 100 }];
   }
+}
+
+/**
+ * Простой выбор одного лучшего видео (для обратной совместимости)
+ */
+async function selectBestVideo(segmentText, videoOptions, excludeIds = []) {
+  const result = await selectBestVideos(
+    segmentText,
+    videoOptions,
+    excludeIds,
+    5
+  );
+  return result.length > 0 ? result[0] : null;
 }
 
 /**
@@ -152,5 +247,6 @@ async function selectFromMultipleSources(
 
 module.exports = {
   selectBestVideo,
+  selectBestVideos,
   selectFromMultipleSources,
 };

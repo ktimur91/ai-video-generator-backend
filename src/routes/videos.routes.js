@@ -5,6 +5,7 @@ const prisma = require("../services/db.service");
 const {
   generateScript,
   generateTopicSuggestions,
+  estimateDuration,
 } = require("../services/ai.service");
 const {
   generateAudio,
@@ -23,7 +24,7 @@ const {
 } = require("../services/pixabay.service");
 const { searchVideo: searchKlipyVideo } = require("../services/klipy.service");
 const { searchMusicForTopic } = require("../services/jamendo.service");
-const { selectBestVideo } = require("../services/video-selector.service");
+const { selectBestVideos } = require("../services/video-selector.service");
 const { selectBestTrack } = require("../services/music-selector.service");
 
 const router = express.Router();
@@ -173,6 +174,7 @@ router.post("/generate", async (req, res) => {
     const hashtags = aiResult.hashtags || ["#interesting", "#интересное"];
 
     // Формируем сегменты БЕЗ аудио (аудио будет генерироваться после одобрения)
+    // Добавляем estimatedDuration и stockVideos (массив для нескольких видео)
     let segments = [
       {
         type: "intro",
@@ -182,11 +184,15 @@ router.post("/generate", async (req, res) => {
           "dynamic",
           "action",
         ],
+        estimatedDuration: estimateDuration(aiResult.intro),
+        stockVideos: [], // Массив видео с процентами
       },
       ...(aiResult.segments || []).map((s, idx) => ({
         ...s,
         type: "fact",
         number: idx + 1,
+        estimatedDuration: estimateDuration(s.text),
+        stockVideos: [],
       })),
       {
         type: "outro",
@@ -196,6 +202,8 @@ router.post("/generate", async (req, res) => {
           "like button",
           "notification bell",
         ],
+        estimatedDuration: estimateDuration(aiResult.outro),
+        stockVideos: [],
       },
     ];
 
@@ -257,8 +265,6 @@ router.post("/generate", async (req, res) => {
           `[Segment ${i}] Searching video with keywords: ${keywords.join(", ")}`
         );
 
-        let stockVideo;
-
         // Если включен AI-выбор и доступна функция для этого источника
         if (useAIVideoSelection && searchVideosWithThumbnails) {
           // Получаем все подходящие видео с превью
@@ -269,25 +275,52 @@ router.post("/generate", async (req, res) => {
           });
 
           if (videoOptions.length > 0) {
-            // AI выбирает лучшее видео по превью, исключая уже использованные
-            stockVideo = await selectBestVideo(
+            // AI выбирает видео по превью (может выбрать несколько), исключая уже использованные
+            const selectedVideos = await selectBestVideos(
               segment.text,
               videoOptions,
-              usedVideoIds
+              usedVideoIds,
+              segment.estimatedDuration
             );
+
+            // Записываем выбранные видео с процентами
+            segments[i].stockVideos = selectedVideos.map((v) => {
+              if (v.id) {
+                usedVideoIds.push(v.id);
+                usedVideoIds.push(String(v.id));
+              }
+              return {
+                ...v,
+                percent: v.percent || 100,
+              };
+            });
+
+            // Для обратной совместимости сохраняем первое видео в stockVideo
+            if (selectedVideos.length > 0) {
+              segments[i].stockVideo = selectedVideos[0];
+            }
           }
         } else {
-          // Обычный случайный выбор
-          stockVideo = await searchSingleVideo(keywords, segment.type);
-        }
+          // Обычный случайный выбор — одно видео на 100%
+          const stockVideo = await searchSingleVideo(keywords, segment.type);
 
-        // Запоминаем ID использованного видео
-        if (stockVideo?.id) {
-          usedVideoIds.push(stockVideo.id);
-          usedVideoIds.push(String(stockVideo.id));
-        }
+          if (stockVideo) {
+            // Запоминаем ID использованного видео
+            if (stockVideo.id) {
+              usedVideoIds.push(stockVideo.id);
+              usedVideoIds.push(String(stockVideo.id));
+            }
 
-        segments[i].stockVideo = stockVideo;
+            segments[i].stockVideos = [
+              {
+                ...stockVideo,
+                percent: 100,
+              },
+            ];
+            // Для обратной совместимости
+            segments[i].stockVideo = stockVideo;
+          }
+        }
       }
     }
 

@@ -5,6 +5,22 @@ const openai = new OpenAI({
 });
 
 /**
+ * Рассчитывает примерную длительность аудио по тексту
+ * @param {string} text - Текст для озвучки
+ * @param {number} charsPerSecond - Символов в секунду (по умолчанию 13 для среднего голоса)
+ * @returns {number} - Примерная длительность в секундах
+ */
+function estimateDuration(text, charsPerSecond = 13) {
+  if (!text) return 0;
+  // Убираем лишние пробелы
+  const cleanText = text.trim().replace(/\s+/g, " ");
+  // Добавляем небольшой запас на паузы между предложениями
+  const sentences = cleanText.split(/[.!?]+/).filter((s) => s.trim()).length;
+  const pauseTime = sentences * 0.3; // 0.3 сек пауза между предложениями
+  return Math.ceil(cleanText.length / charsPerSecond + pauseTime);
+}
+
+/**
  * Генерирует структурированный сценарий с фактами для YouTube Shorts
  * @param {string} topic - Тема для генерации сценария (например "5 фактов о животных", "в 1990 году какие были события 4 штуки")
  * @returns {Promise<{title: string, script: string, segments: Array}>}
@@ -239,4 +255,5 @@ async function generateTopicSuggestions(category = null) {
 module.exports = {
   generateScript,
   generateTopicSuggestions,
+  estimateDuration,
 };

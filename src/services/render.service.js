@@ -31,8 +31,12 @@ async function renderVideo(video) {
   // Убедимся, что директория существует
   await fs.mkdir(VIDEOS_DIR, { recursive: true });
 
-  // Парсим сегменты
-  const segments = segmentsJson ? JSON.parse(segmentsJson) : [];
+  // Парсим сегменты (могут прийти как строка или как массив)
+  const segments = segmentsJson
+    ? typeof segmentsJson === "string"
+      ? JSON.parse(segmentsJson)
+      : segmentsJson
+    : [];
 
   // Backend URL для формирования HTTP ссылок
   const backendUrl = process.env.BACKEND_URL || "http://localhost:3001";
@@ -67,7 +71,7 @@ async function renderVideo(video) {
   }
 
   console.log(
-    `[Render] Background music: ${finalBackgroundMusicUrl || "none"}`
+    `[Render] Background music: ${finalBackgroundMusicUrl || "none"}`,
   );
 
   // Подготовка props для Remotion (с глобальной фоновой музыкой)

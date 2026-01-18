@@ -486,7 +486,8 @@ router.post("/generate", async (req, res) => {
 
 /**
  * POST /approve/:id
- * Одобряет видео после ручной проверки и запускает генерацию аудио
+ * Одобряет видео после ручной проверки и запускает генерацию аудио + рендер
+ * Работает асинхронно - сразу отвечает клиенту
  */
 router.post("/approve/:id", async (req, res) => {
   const { id } = req.params;
@@ -511,7 +512,6 @@ router.post("/approve/:id", async (req, res) => {
     }
 
     // Если переданы обновленные сегменты, используем их
-    // Иначе берем из базы
     let segments = updatedSegments
       ? typeof updatedSegments === "string"
         ? JSON.parse(updatedSegments)
@@ -521,7 +521,9 @@ router.post("/approve/:id", async (req, res) => {
         : video.segments;
 
     // Обновляем backgroundMusicData и voiceConfigId если переданы
-    const updateData = {};
+    const updateData = {
+      segments: JSON.stringify(segments),
+    };
     if (backgroundMusicData !== undefined) {
       if (backgroundMusicData) {
         updateData.backgroundMusicData =
@@ -546,21 +548,62 @@ router.post("/approve/:id", async (req, res) => {
     if (voiceConfigId !== undefined) {
       updateData.voiceConfigId = voiceConfigId || null;
     }
-    if (Object.keys(updateData).length > 0) {
-      await prisma.video.update({
-        where: { id },
-        data: updateData,
-      });
-    }
 
-    // Получаем настройки голоса если указан voiceConfigId
+    // Обновляем статус на GENERATING_ASSETS сразу
+    let progress = createProgress(
+      "success",
+      "success",
+      "success",
+      "pending",
+      "waiting",
+    );
+    await updateVideoProgress(
+      id,
+      { ...updateData, status: "GENERATING_ASSETS" },
+      progress,
+    );
+
+    // Сразу отвечаем клиенту
+    res.json({
+      success: true,
+      message: "Approved. Audio generation and render started.",
+      video: {
+        id,
+        status: "GENERATING_ASSETS",
+        progress,
+      },
+    });
+
+    // Запускаем асинхронную обработку
+    processApproval(id, segments, voiceConfigId, video).catch((error) => {
+      console.error("Background approval processing error:", error);
+    });
+  } catch (error) {
+    console.error("Approve error:", error);
+    res.status(500).json({
+      error: "Approval failed",
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * Асинхронная обработка после approve (аудио + рендер)
+ */
+async function processApproval(
+  videoId,
+  segments,
+  voiceConfigId,
+  originalVideo,
+) {
+  try {
+    // Получаем настройки голоса
     let voiceConfig = null;
     if (voiceConfigId) {
       voiceConfig = await prisma.voiceConfig.findUnique({
         where: { id: voiceConfigId },
       });
     }
-    // Если голос не указан, пробуем найти голос по умолчанию
     if (!voiceConfig) {
       voiceConfig = await prisma.voiceConfig.findFirst({
         where: { isDefault: true },
@@ -568,16 +611,15 @@ router.post("/approve/:id", async (req, res) => {
     }
 
     // Начинаем отслеживание генерации
-    startGeneration(video.id);
+    startGeneration(videoId);
 
     // Получаем старые сегменты для сравнения текста
-    const oldSegments = video.segments
-      ? typeof video.segments === "string"
-        ? JSON.parse(video.segments)
-        : video.segments
+    const oldSegments = originalVideo.segments
+      ? typeof originalVideo.segments === "string"
+        ? JSON.parse(originalVideo.segments)
+        : originalVideo.segments
       : [];
 
-    // Создаем карту старых сегментов по типу/номеру для быстрого поиска
     const oldSegmentsMap = new Map();
     oldSegments.forEach((seg, idx) => {
       const key =
@@ -591,42 +633,22 @@ router.post("/approve/:id", async (req, res) => {
 
     // ========== ШАГ 4: Генерация аудио ==========
     console.log("Step 4: Generating audio for all segments...");
-    let progress = createProgress(
-      "success",
-      "success",
-      "success",
-      "pending",
-      "waiting",
-    );
-    await updateVideoProgress(
-      video.id,
-      { status: "GENERATING_ASSETS" },
-      progress,
-    );
 
-    // Генерируем аудио для каждого сегмента
     for (let i = 0; i < segments.length; i++) {
       const segment = segments[i];
 
       // Проверка остановки
-      if (isGenerationAborted(video.id)) {
-        cleanupGeneration(video.id);
+      if (isGenerationAborted(videoId)) {
+        cleanupGeneration(videoId);
         await updateVideoProgress(
-          video.id,
-          {
-            segments: JSON.stringify(segments),
-            status: "PENDING",
-          },
+          videoId,
+          { status: "PENDING" },
           createProgress("success", "success", "success", "waiting", "waiting"),
         );
-        return res.json({
-          success: true,
-          message: "Generation stopped by user",
-          stopped: true,
-        });
+        console.log(`[Approve] Generation stopped by user for ${videoId}`);
+        return;
       }
 
-      // Определяем ключ сегмента для поиска старого
       const segmentKey =
         segment.type === "intro"
           ? "intro"
@@ -635,14 +657,10 @@ router.post("/approve/:id", async (req, res) => {
             : `segment_${segment.number || i}`;
 
       const oldSegment = oldSegmentsMap.get(segmentKey);
-
-      // Проверяем, изменился ли текст
       const textChanged = !oldSegment || oldSegment.text !== segment.text;
       const hasExistingAudio = segment.audioPath && !textChanged;
 
       if (hasExistingAudio) {
-        // Текст не изменился, переиспользуем существующее аудио
-        // Также копируем audioDuration и wordTimings из старого сегмента если они есть
         if (oldSegment) {
           if (!segments[i].audioDuration && oldSegment.audioDuration) {
             segments[i].audioDuration = oldSegment.audioDuration;
@@ -657,7 +675,7 @@ router.post("/approve/:id", async (req, res) => {
         continue;
       }
 
-      // Если текст изменился и есть старый аудио файл - удаляем его
+      // Удаляем старый аудио файл если текст изменился
       if (textChanged && oldSegment?.audioPath) {
         try {
           const oldAudioPath = path.join(
@@ -670,35 +688,30 @@ router.post("/approve/:id", async (req, res) => {
             `[Audio] Deleted old audio file: ${oldSegment.audioPath}`,
           );
         } catch (err) {
-          // Файл мог уже не существовать
           console.log(`[Audio] Could not delete old audio: ${err.message}`);
         }
       }
 
       console.log(
-        `[Audio] Generating for segment ${i + 1}/${segments.length}: ${
-          segment.type
-        }${textChanged ? " (text changed)" : ""}`,
+        `[Audio] Generating for segment ${i + 1}/${segments.length}: ${segment.type}`,
       );
 
       const segmentId =
         segment.type === "intro"
-          ? `${video.id}_intro`
+          ? `${videoId}_intro`
           : segment.type === "outro"
-            ? `${video.id}_outro`
-            : `${video.id}_segment_${segment.number || i}`;
+            ? `${videoId}_outro`
+            : `${videoId}_segment_${segment.number || i}`;
 
-      // Передаём настройки голоса в generateAudio
       const audio = await generateAudio(segment.text, segmentId, voiceConfig);
       segments[i].audioPath = audio.path;
       segments[i].audioDuration = audio.duration;
 
-      // Транскрибируем для получения таймингов слов (для субтитров)
+      // Транскрибируем для таймингов слов
       try {
         const {
           transcribeWithTimings,
         } = require("../services/whisper.service");
-        const path = require("path");
         const fullAudioPath = path.join(__dirname, "../../", audio.path);
         const wordTimings = await transcribeWithTimings(fullAudioPath);
         segments[i].wordTimings = wordTimings;
@@ -711,53 +724,47 @@ router.post("/approve/:id", async (req, res) => {
       }
     }
 
-    // Аудио готово, сохраняем сегменты и сразу запускаем рендер
-    progress = createProgress(
-      "success",
-      "success",
-      "success",
-      "success",
-      "pending", // Рендер сразу начинается
-    );
-    await updateVideoProgress(
-      video.id,
-      {
-        segments: JSON.stringify(segments),
-        status: "RENDERING",
-      },
-      progress,
-    );
-
-    // ========== ШАГ 5: Автоматический рендер ==========
+    // ========== ШАГ 5: Рендер ==========
     console.log("Step 5: Auto-starting render...");
 
     // Проверка остановки перед рендером
-    if (isGenerationAborted(video.id)) {
-      cleanupGeneration(video.id);
+    if (isGenerationAborted(videoId)) {
+      cleanupGeneration(videoId);
       await updateVideoProgress(
-        video.id,
-        {
-          status: "PENDING",
-        },
+        videoId,
+        { status: "PENDING" },
         createProgress("success", "success", "success", "success", "waiting"),
       );
-      return res.json({
-        success: true,
-        message: "Generation stopped by user before render",
-        stopped: true,
-      });
+      console.log(`[Approve] Generation stopped before render for ${videoId}`);
+      return;
     }
 
-    // Получаем обновленное видео из базы для рендера
-    const videoForRender = await prisma.video.findUnique({ where: { id } });
+    // Обновляем статус на RENDERING
+    let progress = createProgress(
+      "success",
+      "success",
+      "success",
+      "success",
+      "pending",
+    );
+    await updateVideoProgress(
+      videoId,
+      { segments: JSON.stringify(segments), status: "RENDERING" },
+      progress,
+    );
+
+    // Получаем обновленное видео для рендера
+    const videoForRender = await prisma.video.findUnique({
+      where: { id: videoId },
+    });
 
     // Запускаем рендеринг
     const videoPath = await renderVideo({
       ...videoForRender,
-      segments: segments, // Используем уже готовые сегменты
+      segments: segments,
     });
 
-    // Обновляем запись с путем к видео и статусом COMPLETED
+    // Успешно завершено
     progress = createProgress(
       "success",
       "success",
@@ -765,30 +772,17 @@ router.post("/approve/:id", async (req, res) => {
       "success",
       "success",
     );
-    const updatedVideo = await updateVideoProgress(
-      video.id,
-      {
-        videoPath,
-        status: "COMPLETED",
-      },
+    await updateVideoProgress(
+      videoId,
+      { videoPath, status: "COMPLETED" },
       progress,
     );
 
-    cleanupGeneration(video.id);
-
-    res.json({
-      success: true,
-      message: "Video approved, audio generated, and rendered successfully.",
-      video: {
-        ...updatedVideo,
-        segments,
-        progress,
-      },
-    });
+    cleanupGeneration(videoId);
+    console.log(`[Approve] Completed successfully for ${videoId}`);
   } catch (error) {
-    console.error("Approve/Audio/Render error:", error);
+    console.error("processApproval error:", error);
 
-    // Определяем на каком шаге произошла ошибка
     const failedProgress = createProgress(
       "success",
       "success",
@@ -796,25 +790,21 @@ router.post("/approve/:id", async (req, res) => {
       "success",
       "failed",
     );
-
     try {
       await prisma.video.update({
-        where: { id },
+        where: { id: videoId },
         data: {
           status: "FAILED",
           progress: JSON.stringify(failedProgress),
         },
       });
     } catch (e) {
-      // ignore
+      console.error("Failed to update video status to FAILED:", e);
     }
 
-    res.status(500).json({
-      error: "Generation failed",
-      message: error.message,
-    });
+    cleanupGeneration(videoId);
   }
-});
+}
 
 /**
  * POST /stop/:id

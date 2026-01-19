@@ -6,7 +6,8 @@ const { transcribeWithTimings } = require("./whisper.service");
 const AUDIO_DIR = path.join(__dirname, "../../storage/audio");
 
 // Путь к edge-tts CLI (Python)
-const EDGE_TTS_PATH = "/Users/apple/Library/Python/3.9/bin/edge-tts";
+// Приоритет: переменная окружения > просто команда (если в PATH)
+const EDGE_TTS_PATH = process.env.EDGE_TTS_PATH || "edge-tts";
 
 /**
  * Словарь замен английских слов на фонетическую транскрипцию для русского TTS
@@ -190,7 +191,7 @@ async function generateAudio(text, videoId, voiceConfig = null) {
   const volume = voiceConfig?.volume || "+0%";
 
   console.log(
-    `[TTS] Using voice: ${voice}, rate: ${rate}, pitch: ${pitch}, volume: ${volume}`
+    `[TTS] Using voice: ${voice}, rate: ${rate}, pitch: ${pitch}, volume: ${volume}`,
   );
 
   const filename = `${videoId}.mp3`;
@@ -264,7 +265,7 @@ async function generateAudio(text, videoId, voiceConfig = null) {
             duration: 3,
           });
         }
-      }
+      },
     );
   });
 }
@@ -317,13 +318,13 @@ async function generateSegmentAudio(text, videoId, segmentNumber) {
   cleanText = applyPronunciationFixes(cleanText);
   console.log(
     `[TTS] Segment ${segmentNumber} text after fixes:`,
-    cleanText.substring(0, 80) + "..."
+    cleanText.substring(0, 80) + "...",
   );
 
   // Создаём временный файл с текстом
   const textFilePath = path.join(
     AUDIO_DIR,
-    `${videoId}_segment_${segmentNumber}.txt`
+    `${videoId}_segment_${segmentNumber}.txt`,
   );
   await fs.writeFile(textFilePath, cleanText, "utf-8");
 
@@ -333,7 +334,7 @@ async function generateSegmentAudio(text, videoId, segmentNumber) {
 
     console.log(
       `Generating audio for segment ${segmentNumber}:`,
-      cleanText.substring(0, 50) + "..."
+      cleanText.substring(0, 50) + "...",
     );
 
     exec(
@@ -348,7 +349,7 @@ async function generateSegmentAudio(text, videoId, segmentNumber) {
         if (error) {
           console.error("TTS error:", error);
           reject(
-            new Error(`Failed to generate segment audio: ${error.message}`)
+            new Error(`Failed to generate segment audio: ${error.message}`),
           );
           return;
         }
@@ -357,7 +358,7 @@ async function generateSegmentAudio(text, videoId, segmentNumber) {
         try {
           const duration = await getAudioDuration(outputPath);
           console.log(
-            `Segment ${segmentNumber} audio: ${duration.toFixed(2)}s`
+            `Segment ${segmentNumber} audio: ${duration.toFixed(2)}s`,
           );
 
           resolve({
@@ -367,7 +368,7 @@ async function generateSegmentAudio(text, videoId, segmentNumber) {
         } catch (durError) {
           reject(durError);
         }
-      }
+      },
     );
   });
 }
@@ -392,7 +393,7 @@ async function generateSegmentsAudio(segments, videoId, onProgress) {
     const audio = await generateSegmentAudio(
       segment.text,
       videoId,
-      segment.number
+      segment.number,
     );
 
     // Транскрибируем аудио для получения таймингов слов
@@ -401,12 +402,12 @@ async function generateSegmentsAudio(segments, videoId, onProgress) {
       const fullAudioPath = path.join(__dirname, "../../", audio.path);
       wordTimings = await transcribeWithTimings(fullAudioPath);
       console.log(
-        `[Whisper] Segment ${segment.number}: ${wordTimings.length} words with timings`
+        `[Whisper] Segment ${segment.number}: ${wordTimings.length} words with timings`,
       );
     } catch (err) {
       console.error(
         `[Whisper] Failed for segment ${segment.number}:`,
-        err.message
+        err.message,
       );
     }
 

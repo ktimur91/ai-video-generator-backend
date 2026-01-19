@@ -68,6 +68,7 @@ function formatTemplateForRemotion(template, backendUrl) {
 
     // Субтитры
     subtitleMode: template.subtitleMode,
+    subtitlePhraseLength: template.subtitlePhraseLength,
     subtitlePositionX: template.subtitlePositionX,
     subtitlePositionY: template.subtitlePositionY,
     subtitleWidth: template.subtitleWidth,

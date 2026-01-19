@@ -130,6 +130,7 @@ model VideoTemplate {
   
   // ========== СУБТИТРЫ ==========
   subtitleMode         String  @default("karaoke") // karaoke | phrase | word
+  subtitlePhraseLength Int     @default(4) // Количество слов в фразе для режима "phrase"
   subtitlePositionX    Float   @default(50)  // % от ширины (центр по умолчанию)
   subtitlePositionY    Float   @default(80)  // % от высоты (снизу по умолчанию)
   subtitlePositionPreset String? // top | center | bottom | null=custom

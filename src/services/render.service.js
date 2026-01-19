@@ -1,9 +1,93 @@
 const { exec } = require("child_process");
 const path = require("path");
 const fs = require("fs").promises;
+const prisma = require("./db.service");
 
 const VIDEOS_DIR = path.join(__dirname, "../../storage/videos");
 const FRONT_RENDER_DIR = path.join(__dirname, "../../../front-render");
+
+/**
+ * Преобразует template из БД в формат для Remotion
+ */
+function formatTemplateForRemotion(template, backendUrl) {
+  if (!template) return null;
+
+  // Парсим ctaItems
+  let ctaItems = [];
+  try {
+    ctaItems =
+      typeof template.ctaItems === "string"
+        ? JSON.parse(template.ctaItems)
+        : template.ctaItems || [];
+  } catch (e) {
+    console.error("[Render] Failed to parse ctaItems:", e);
+  }
+
+  // Преобразуем пути к изображениям в полные URL
+  ctaItems = ctaItems.map((item) => ({
+    ...item,
+    imagePath: item.imagePath ? `${backendUrl}/${item.imagePath}` : null,
+  }));
+
+  // Преобразуем overlays
+  const overlays = (template.overlays || []).map((overlay) => ({
+    id: overlay.id,
+    imagePath: `${backendUrl}/${overlay.imagePath}`,
+    positionX: overlay.positionX,
+    positionY: overlay.positionY,
+    width: overlay.width,
+    opacity: overlay.opacity,
+    order: overlay.order,
+  }));
+
+  return {
+    // Цвета
+    primaryColor: template.primaryColor,
+    backgroundColor: template.backgroundColor,
+
+    // Субтитры
+    subtitleMode: template.subtitleMode,
+    subtitlePositionX: template.subtitlePositionX,
+    subtitlePositionY: template.subtitlePositionY,
+    subtitleWidth: template.subtitleWidth,
+    subtitleFontFamily: template.subtitleFontFamily,
+    subtitleFontWeight: template.subtitleFontWeight,
+    subtitleFontSize: template.subtitleFontSize,
+    subtitleFontColor: template.subtitleFontColor,
+    subtitleHighlightColor: template.subtitleHighlightColor,
+    subtitleStrokeEnabled: template.subtitleStrokeEnabled,
+    subtitleStrokeColor: template.subtitleStrokeColor,
+    subtitleStrokeWidth: template.subtitleStrokeWidth,
+    subtitleBgColor: template.subtitleBgColor,
+    subtitleBgEnabled: template.subtitleBgEnabled,
+
+    // Нумерация
+    showNumbers: template.showNumbers,
+    numberPositionX: template.numberPositionX,
+    numberPositionY: template.numberPositionY,
+    numberStyle: template.numberStyle,
+    numberBgColor: template.numberBgColor,
+    numberFontColor: template.numberFontColor,
+    numberFontSize: template.numberFontSize,
+
+    // Прогресс-бар
+    showProgressBar: template.showProgressBar,
+    progressBarPosition: template.progressBarPosition,
+    progressBarColor: template.progressBarColor,
+    progressBarHeight: template.progressBarHeight,
+
+    // CTA
+    showCTA: template.showCTA,
+    ctaPositionX: template.ctaPositionX,
+    ctaPositionY: template.ctaPositionY,
+    ctaDirection: template.ctaDirection,
+    ctaGap: template.ctaGap,
+    ctaItems,
+
+    // Оверлеи
+    overlays,
+  };
+}
 
 /**
  * Запускает рендеринг видео через Remotion CLI
@@ -12,6 +96,7 @@ const FRONT_RENDER_DIR = path.join(__dirname, "../../../front-render");
  * @param {string} video.title - Заголовок видео
  * @param {string} video.scriptText - Текст сценария
  * @param {string} video.segments - JSON строка с сегментами
+ * @param {string} video.templateId - ID шаблона внешнего вида
  * @param {string} video.backgroundMusicUrl - URL фоновой музыки (Jamendo)
  * @param {string} video.backgroundMusicData - JSON с полными данными трека
  * @returns {Promise<string>} - Путь к созданному видео файлу
@@ -22,6 +107,7 @@ async function renderVideo(video) {
     title,
     scriptText,
     segments: segmentsJson,
+    templateId,
     backgroundMusicUrl,
     backgroundMusicData,
   } = video;
@@ -40,6 +126,21 @@ async function renderVideo(video) {
 
   // Backend URL для формирования HTTP ссылок
   const backendUrl = process.env.BACKEND_URL || "http://localhost:3001";
+
+  // Загружаем шаблон если указан
+  let template = null;
+  if (templateId) {
+    try {
+      const dbTemplate = await prisma.videoTemplate.findUnique({
+        where: { id: templateId },
+        include: { overlays: true },
+      });
+      template = formatTemplateForRemotion(dbTemplate, backendUrl);
+      console.log(`[Render] Using template: ${dbTemplate?.name || templateId}`);
+    } catch (e) {
+      console.error("[Render] Failed to load template:", e);
+    }
+  }
 
   // Преобразуем пути к аудио в HTTP URLs
   const segmentsWithUrls = segments.map((segment) => ({
@@ -74,13 +175,22 @@ async function renderVideo(video) {
     `[Render] Background music: ${finalBackgroundMusicUrl || "none"}`,
   );
 
-  // Подготовка props для Remotion (с глобальной фоновой музыкой)
-  const props = JSON.stringify({
+  // Подготовка props для Remotion (с глобальной фоновой музыкой и шаблоном)
+  const propsObj = {
     title,
     scriptText: scriptText,
     segments: segmentsWithUrls,
     backgroundMusicUrl: finalBackgroundMusicUrl,
-  });
+  };
+
+  // Добавляем шаблон если есть
+  if (template) {
+    propsObj.template = template;
+    // Используем primaryColor из шаблона как themeColor
+    propsObj.themeColor = template.primaryColor;
+  }
+
+  const props = JSON.stringify(propsObj);
 
   // Экранируем props для shell
   const escapedProps = props.replace(/'/g, "'\\''");
@@ -92,6 +202,9 @@ async function renderVideo(video) {
 
   console.log("Executing render command:", command);
   console.log("Segments count:", segments.length);
+  if (template) {
+    console.log("[Render] Template settings applied");
+  }
 
   return new Promise((resolve, reject) => {
     exec(command, { maxBuffer: 1024 * 1024 * 50 }, (error, stdout, stderr) => {

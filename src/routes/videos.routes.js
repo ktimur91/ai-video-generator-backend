@@ -89,6 +89,7 @@ router.post("/generate", async (req, res) => {
     videoSource = "pexels",
     useAIVideoSelection = false,
     useAIMusicSelection = false,
+    templateId = null,
   } = req.body;
 
   if (!topic) {
@@ -140,10 +141,13 @@ router.post("/generate", async (req, res) => {
         title: "Generating...",
         scriptText: "",
         progress: JSON.stringify(progress),
+        templateId: templateId,
       },
     });
 
-    console.log(`Created video record: ${video.id}`);
+    console.log(
+      `Created video record: ${video.id}${templateId ? ` with template ${templateId}` : ""}`,
+    );
 
     // Начинаем отслеживание генерации
     startGeneration(video.id);
@@ -520,10 +524,16 @@ router.post("/approve/:id", async (req, res) => {
         ? JSON.parse(video.segments)
         : video.segments;
 
-    // Обновляем backgroundMusicData и voiceConfigId если переданы
+    // Обновляем данные
     const updateData = {
       segments: JSON.stringify(segments),
     };
+
+    // templateId
+    if (req.body.templateId !== undefined) {
+      updateData.templateId = req.body.templateId || null;
+    }
+
     if (backgroundMusicData !== undefined) {
       if (backgroundMusicData) {
         updateData.backgroundMusicData =
@@ -2091,6 +2101,7 @@ router.post("/videos/:id/regenerate", async (req, res) => {
     segments: inputSegments,
     voiceConfigId,
     backgroundMusicData,
+    templateId,
   } = req.body;
 
   try {
@@ -2137,6 +2148,11 @@ router.post("/videos/:id/regenerate", async (req, res) => {
       status: "GENERATING_ASSETS",
       voiceConfigId: voiceConfigId || null,
     };
+
+    // Добавляем templateId если передан
+    if (templateId !== undefined) {
+      updateData.templateId = templateId || null;
+    }
 
     // Обрабатываем backgroundMusicData
     if (backgroundMusicData !== undefined) {

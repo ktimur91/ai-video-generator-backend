@@ -29,16 +29,37 @@ function formatTemplateForRemotion(template, backendUrl) {
     imagePath: item.imagePath ? `${backendUrl}/${item.imagePath}` : null,
   }));
 
-  // Преобразуем overlays
-  const overlays = (template.overlays || []).map((overlay) => ({
-    id: overlay.id,
-    imagePath: `${backendUrl}/${overlay.imagePath}`,
-    positionX: overlay.positionX,
-    positionY: overlay.positionY,
-    width: overlay.width,
-    opacity: overlay.opacity,
-    order: overlay.order,
-  }));
+  // Преобразуем overlays (включая appearanceConfig для фильтрации по типу сегмента)
+  const overlays = (template.overlays || []).map((overlay) => {
+    // Парсим appearanceConfig
+    let appearanceConfig = {
+      intro: { show: false },
+      segments: { show: true },
+      outro: { show: false },
+    };
+    try {
+      if (overlay.appearanceConfig) {
+        appearanceConfig =
+          typeof overlay.appearanceConfig === "string"
+            ? JSON.parse(overlay.appearanceConfig)
+            : overlay.appearanceConfig;
+      }
+    } catch (e) {
+      console.error("[Render] Failed to parse appearanceConfig:", e);
+    }
+
+    return {
+      id: overlay.id,
+      imagePath: `${backendUrl}/${overlay.imagePath}`,
+      positionX: overlay.positionX,
+      positionY: overlay.positionY,
+      anchor: overlay.anchor,
+      width: overlay.width,
+      opacity: overlay.opacity,
+      order: overlay.order,
+      appearanceConfig,
+    };
+  });
 
   return {
     // Цвета
@@ -65,10 +86,13 @@ function formatTemplateForRemotion(template, backendUrl) {
     showNumbers: template.showNumbers,
     numberPositionX: template.numberPositionX,
     numberPositionY: template.numberPositionY,
+    numberAnchor: template.numberAnchor,
     numberStyle: template.numberStyle,
     numberBgColor: template.numberBgColor,
     numberFontColor: template.numberFontColor,
     numberFontSize: template.numberFontSize,
+    numberTemplate: template.numberTemplate,
+    numberDirection: template.numberDirection,
 
     // Прогресс-бар
     showProgressBar: template.showProgressBar,
@@ -80,6 +104,7 @@ function formatTemplateForRemotion(template, backendUrl) {
     showCTA: template.showCTA,
     ctaPositionX: template.ctaPositionX,
     ctaPositionY: template.ctaPositionY,
+    ctaAnchor: template.ctaAnchor,
     ctaDirection: template.ctaDirection,
     ctaGap: template.ctaGap,
     ctaItems,
@@ -137,6 +162,14 @@ async function renderVideo(video) {
       });
       template = formatTemplateForRemotion(dbTemplate, backendUrl);
       console.log(`[Render] Using template: ${dbTemplate?.name || templateId}`);
+      console.log(`[Render] Template settings:`, {
+        backgroundColor: template?.backgroundColor,
+        subtitleFontSize: template?.subtitleFontSize,
+        subtitleFontWeight: template?.subtitleFontWeight,
+        showNumbers: template?.showNumbers,
+        numberPositionX: template?.numberPositionX,
+        numberPositionY: template?.numberPositionY,
+      });
     } catch (e) {
       console.error("[Render] Failed to load template:", e);
     }
@@ -191,6 +224,26 @@ async function renderVideo(video) {
   }
 
   const props = JSON.stringify(propsObj);
+
+  // DEBUG: Логируем что передаем в Remotion
+  console.log(
+    "[Render] Props for Remotion:",
+    JSON.stringify(
+      {
+        hasTemplate: !!template,
+        templateShowNumbers: template?.showNumbers,
+        templateNumberPositionX: template?.numberPositionX,
+        templateNumberPositionY: template?.numberPositionY,
+        segmentsCount: segmentsWithUrls.length,
+        segmentTypes: segmentsWithUrls.map((s) => ({
+          type: s.type,
+          number: s.number,
+        })),
+      },
+      null,
+      2,
+    ),
+  );
 
   // Экранируем props для shell
   const escapedProps = props.replace(/'/g, "'\\''");

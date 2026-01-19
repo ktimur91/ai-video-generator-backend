@@ -179,7 +179,7 @@ router.get("/", async (req, res) => {
           select: { id: true, title: true, thumbnail: true },
         },
         overlays: {
-          orderBy: { zIndex: "asc" },
+          orderBy: { order: "asc" },
         },
       },
     });
@@ -204,7 +204,7 @@ router.get("/:id", async (req, res) => {
           select: { id: true, title: true, thumbnail: true },
         },
         overlays: {
-          orderBy: { zIndex: "asc" },
+          orderBy: { order: "asc" },
         },
       },
     });
@@ -255,7 +255,7 @@ router.post("/", async (req, res) => {
       },
       include: {
         channel: { select: { id: true, title: true, thumbnail: true } },
-        overlays: { orderBy: { zIndex: "asc" } },
+        overlays: { orderBy: { order: "asc" } },
       },
     });
 
@@ -306,7 +306,7 @@ router.put("/:id", async (req, res) => {
       data: updateData,
       include: {
         channel: { select: { id: true, title: true, thumbnail: true } },
-        overlays: { orderBy: { zIndex: "asc" } },
+        overlays: { orderBy: { order: "asc" } },
       },
     });
 
@@ -377,7 +377,7 @@ router.put("/:id/default", async (req, res) => {
       data: { isDefault: true },
       include: {
         channel: { select: { id: true, title: true, thumbnail: true } },
-        overlays: { orderBy: { zIndex: "asc" } },
+        overlays: { orderBy: { order: "asc" } },
       },
     });
 
@@ -435,6 +435,14 @@ router.post("/:id/overlays", upload.single("image"), async (req, res) => {
       finalZIndex = (maxZIndex?.zIndex || 0) + 1;
     }
 
+    // Определяем order - новый оверлей добавляется в конец списка
+    const maxOrder = await prisma.templateOverlay.findFirst({
+      where: { templateId: id },
+      orderBy: { order: "desc" },
+      select: { order: true },
+    });
+    const finalOrder = (maxOrder?.order ?? -1) + 1;
+
     // Парсим или создаём дефолтный appearanceConfig
     const defaultAppearance = {
       intro: { show: false, animation: null },
@@ -468,6 +476,7 @@ router.post("/:id/overlays", upload.single("image"), async (req, res) => {
           keepAspectRatio !== "false" && keepAspectRatio !== false,
         rotation: parseFloat(rotation) || 0,
         opacity: parseFloat(opacity) || 1,
+        order: finalOrder,
         zIndex: finalZIndex,
         appearanceConfig: JSON.stringify(parsedAppearance),
       },
@@ -566,7 +575,7 @@ router.put("/:templateId/overlays/reorder", async (req, res) => {
     // Возвращаем обновлённый список
     const overlays = await prisma.templateOverlay.findMany({
       where: { templateId },
-      orderBy: { zIndex: "asc" },
+      orderBy: { order: "asc" },
     });
 
     res.json({

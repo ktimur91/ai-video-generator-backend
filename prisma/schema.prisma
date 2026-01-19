@@ -150,10 +150,13 @@ model VideoTemplate {
   numberPositionX      Float   @default(5)   // % от ширины
   numberPositionY      Float   @default(5)   // % от высоты
   numberPositionPreset String? @default("top-left") // top-left | top-right | bottom-left | bottom-right | null=custom
-  numberStyle          String  @default("circle")   // circle | square | badge | minimal
+  numberAnchor         String  @default("top-left") // center | top-left | top-center | top-right | bottom-left | bottom-center | bottom-right
+  numberStyle          String  @default("badge")   // badge | square | minimal
   numberBgColor        String? // null = использовать primaryColor
   numberFontColor      String  @default("#FFFFFF")
   numberFontSize       Int     @default(24)
+  numberTemplate       String  @default("{num}") // Шаблон текста: "Факт №{num}", "Топ {num}", etc.
+  numberDirection      String  @default("asc") // asc = 1→N, desc = N→1
   
   // ========== ПРОГРЕСС-БАР ==========
   showProgressBar      Boolean @default(true)
@@ -165,6 +168,7 @@ model VideoTemplate {
   showCTA              Boolean @default(true)
   ctaPositionX         Float   @default(50)  // % от ширины (центр)
   ctaPositionY         Float   @default(90)  // % от высоты (снизу)
+  ctaAnchor            String  @default("center") // center | top-left | top-center | top-right | bottom-left | bottom-center | bottom-right
   ctaDirection         String  @default("horizontal") // horizontal | vertical
   ctaGap               Int     @default(8)   // Расстояние между элементами в px
   ctaItems             String  @default("[]") // JSON массив элементов CTA
@@ -189,11 +193,15 @@ model TemplateOverlay {
   positionX   Float    @default(50)  // 0-100
   positionY   Float    @default(50)  // 0-100
   positionPreset String? // top-left | top-right | bottom-left | bottom-right | center | null=custom
+  anchor      String   @default("center") // center | top-left | top-center | top-right | bottom-left | bottom-center | bottom-right
   width       Float    @default(20)  // Ширина в % от ширины видео
   height      Float?   // Высота в % (null = auto, сохранять пропорции)
   keepAspectRatio Boolean @default(true) // Сохранять пропорции
   rotation    Float    @default(0)   // Угол поворота в градусах
   opacity     Float    @default(1)   // Прозрачность 0-1
+  
+  // Порядок отображения в списке (для drag-drop сортировки)
+  order       Int      @default(0)
   
   // Z-index для наложения (порядок слоёв)
   zIndex      Int      @default(10)

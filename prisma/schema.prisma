@@ -34,6 +34,9 @@ model Video {
   tags                    String?     // JSON массив тегов для YouTube
   hashtags                String?     // JSON массив хештегов для описания (#cats #коты)
   
+  // Настройки генерации сценария
+  useLoopScript           Boolean @default(false) // Закольцованный сценарий (конец → начало)
+  
   // YouTube публикация
   youtubeId          String?     // ID видео на YouTube
   youtubeUrl         String?     // URL видео на YouTube
@@ -174,6 +177,12 @@ model VideoTemplate {
   ctaGap               Int     @default(8)   // Расстояние между элементами в px
   ctaItems             String  @default("[]") // JSON массив элементов CTA
   // Структура ctaItem: { icon, iconSize?, imageSize?, imagePath?, text?, textPosition?, bgColor?, textColor? }
+  
+  // ========== АУДИО ==========
+  backgroundMusicVolume Float   @default(0.12) // Громкость фоновой музыки 0-1 (рекомендуется 0.1-0.2 чтобы голос был громче)
+  
+  // ========== МОНТАЖ ==========
+  maxClipDuration       Int     @default(3)    // Максимальная длительность одного клипа в секундах (рекомендуется 2-3)
   
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

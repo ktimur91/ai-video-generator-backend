@@ -89,6 +89,7 @@ router.post("/generate", async (req, res) => {
     videoSource = "pexels",
     useAIVideoSelection = false,
     useAIMusicSelection = false,
+    useLoopScript = false,
     templateId = null,
   } = req.body;
 
@@ -127,7 +128,7 @@ router.post("/generate", async (req, res) => {
   console.log(
     `[VideoSource] Using ${videoSource} for video search${
       useAIVideoSelection ? " with AI video selection" : ""
-    }${useAIMusicSelection ? " with AI music selection" : ""}`,
+    }${useAIMusicSelection ? " with AI music selection" : ""}${useLoopScript ? " with LOOP script" : ""}`,
   );
 
   let video = null;
@@ -142,6 +143,7 @@ router.post("/generate", async (req, res) => {
         scriptText: "",
         progress: JSON.stringify(progress),
         templateId: templateId,
+        useLoopScript: useLoopScript,
       },
     });
 
@@ -173,7 +175,7 @@ router.post("/generate", async (req, res) => {
       });
     }
 
-    const aiResult = await generateScript(topic);
+    const aiResult = await generateScript(topic, { useLoopScript });
     const tags = aiResult.tags || ["shorts", "факты", "интересное"];
     const hashtags = aiResult.hashtags || ["#interesting", "#интересное"];
 

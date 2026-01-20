@@ -110,6 +110,12 @@ function formatTemplateForRemotion(template, backendUrl) {
     ctaGap: template.ctaGap,
     ctaItems,
 
+    // Аудио
+    backgroundMusicVolume: template.backgroundMusicVolume ?? 0.12,
+
+    // Монтаж
+    maxClipDuration: template.maxClipDuration ?? 3,
+
     // Оверлеи
     overlays,
   };

@@ -11,7 +11,7 @@ const {
   generateAudio,
   generateSegmentsAudio,
 } = require("../services/voice.service");
-const { renderVideo } = require("../services/render.service");
+const { renderVideo, stopRender } = require("../services/render.service");
 const {
   findVideosForSegments: findVideosForSegmentsPexels,
   searchSingleVideo: searchSingleVideoPexels,
@@ -826,8 +826,14 @@ router.post("/stop/:id", async (req, res) => {
   const { id } = req.params;
 
   try {
-    // Устанавливаем флаг остановки
+    // Устанавливаем флаг остановки для генерации
     abortGeneration(id);
+
+    // Останавливаем рендеринг если он идёт
+    const renderStopped = stopRender(id);
+    if (renderStopped) {
+      console.log(`[Stop] Render process killed for video: ${id}`);
+    }
 
     // Получаем текущий прогресс
     const video = await prisma.video.findUnique({
@@ -874,6 +880,7 @@ router.post("/stop/:id", async (req, res) => {
     res.json({
       success: true,
       message: "Generation stopped",
+      renderStopped,
     });
   } catch (error) {
     console.error("Stop error:", error);

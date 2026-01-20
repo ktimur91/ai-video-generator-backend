@@ -1,10 +1,13 @@
-const { exec } = require("child_process");
+const { exec, spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs").promises;
 const prisma = require("./db.service");
 
 const VIDEOS_DIR = path.join(__dirname, "../../storage/videos");
 const FRONT_RENDER_DIR = path.join(__dirname, "../../../front-render");
+
+// Храним активные процессы рендеринга для возможности их остановки
+const activeRenderProcesses = new Map();
 
 /**
  * Преобразует template из БД в формат для Remotion
@@ -267,11 +270,38 @@ async function renderVideo(video) {
   }
 
   return new Promise((resolve, reject) => {
-    exec(command, { maxBuffer: 1024 * 1024 * 50 }, (error, stdout, stderr) => {
-      if (error) {
-        console.error("Render error:", error);
+    // Используем spawn с shell для возможности убить группу процессов
+    const childProcess = spawn("sh", ["-c", command], {
+      cwd: FRONT_RENDER_DIR,
+      detached: true, // Создаёт новую группу процессов
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    childProcess.stdout.on("data", (data) => {
+      stdout += data.toString();
+    });
+
+    childProcess.stderr.on("data", (data) => {
+      stderr += data.toString();
+    });
+
+    childProcess.on("close", (code, signal) => {
+      // Удаляем из активных процессов после завершения
+      activeRenderProcesses.delete(id);
+
+      if (signal === "SIGTERM" || signal === "SIGKILL") {
+        console.log(`[Render] Process was stopped for video ${id}`);
+        reject(new Error("Render stopped by user"));
+        return;
+      }
+
+      if (code !== 0) {
+        console.error("Render error, exit code:", code);
         console.error("Stderr:", stderr);
-        reject(new Error(`Render failed: ${error.message}`));
+        reject(new Error(`Render failed with exit code ${code}`));
         return;
       }
 
@@ -284,7 +314,71 @@ async function renderVideo(video) {
       // Возвращаем относительный путь для хранения в БД
       resolve(`storage/videos/${outputFilename}`);
     });
+
+    // Сохраняем процесс для возможности остановки
+    activeRenderProcesses.set(id, childProcess);
+    console.log(
+      `[Render] Started render process for video ${id}, PID: ${childProcess.pid}`,
+    );
   });
+}
+
+/**
+ * Останавливает рендеринг видео по ID
+ * @param {string} videoId - ID видео
+ * @returns {boolean} - true если процесс был остановлен
+ */
+function stopRender(videoId) {
+  const childProcess = activeRenderProcesses.get(videoId);
+  if (childProcess && childProcess.pid) {
+    console.log(
+      `[Render] Stopping render process for video ${videoId}, PID: ${childProcess.pid}`,
+    );
+
+    // Убиваем всю группу процессов (важно для npx/node дочерних процессов)
+    try {
+      // На macOS/Linux отрицательный PID убивает группу процессов
+      process.kill(-childProcess.pid, "SIGTERM");
+      console.log(
+        `[Render] Sent SIGTERM to process group -${childProcess.pid}`,
+      );
+
+      // Через 3 секунды принудительно убиваем если процесс ещё жив
+      setTimeout(() => {
+        try {
+          process.kill(-childProcess.pid, 0); // Проверяем, жив ли процесс
+          console.log(`[Render] Process still alive, sending SIGKILL`);
+          process.kill(-childProcess.pid, "SIGKILL");
+        } catch (e) {
+          // Процесс уже завершён - это хорошо
+        }
+      }, 3000);
+    } catch (e) {
+      console.log(
+        `[Render] Could not kill process group: ${e.message}, trying direct kill`,
+      );
+      // Fallback: убиваем только основной процесс
+      try {
+        childProcess.kill("SIGKILL");
+      } catch (e2) {
+        console.error(`[Render] Failed to kill process: ${e2.message}`);
+      }
+    }
+
+    activeRenderProcesses.delete(videoId);
+    return true;
+  }
+  console.log(`[Render] No active render process found for video ${videoId}`);
+  return false;
+}
+
+/**
+ * Проверяет, идёт ли рендеринг для видео
+ * @param {string} videoId - ID видео
+ * @returns {boolean}
+ */
+function isRenderingActive(videoId) {
+  return activeRenderProcesses.has(videoId);
 }
 
 /**
@@ -302,5 +396,7 @@ async function checkRemotionInstalled() {
 
 module.exports = {
   renderVideo,
+  stopRender,
+  isRenderingActive,
   checkRemotionInstalled,
 };

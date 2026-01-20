@@ -7,8 +7,8 @@ const fs = require("fs").promises;
 
 const prisma = new PrismaClient();
 
-// Путь к edge-tts CLI
-const EDGE_TTS_PATH = "/Users/apple/Library/Python/3.9/bin/edge-tts";
+// Путь к edge-tts CLI (из переменной окружения или в PATH)
+const EDGE_TTS_PATH = process.env.EDGE_TTS_PATH || "edge-tts";
 const PREVIEW_DIR = path.join(__dirname, "../../storage/voice-previews");
 
 // Доступные голоса Edge TTS (русские и популярные английские)
@@ -265,7 +265,7 @@ router.post("/preview", async (req, res) => {
 
     const command = `"${EDGE_TTS_PATH}" --voice "${voice}" ${rateParam} ${pitchParam} ${volumeParam} --text "${text.replace(
       /"/g,
-      '\\"'
+      '\\"',
     )}" --write-media "${outputPath}"`;
 
     console.log("[Voice Preview] Command:", command);
@@ -282,7 +282,7 @@ router.post("/preview", async (req, res) => {
             return;
           }
           resolve();
-        }
+        },
       );
     });
 

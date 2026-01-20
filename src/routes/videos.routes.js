@@ -1363,6 +1363,57 @@ router.patch("/videos/:id", async (req, res) => {
 });
 
 /**
+ * POST /videos/:id/unlink-youtube
+ * Отвязывает видео от YouTube (очищает youtubeId, youtubeUrl, youtubeChannelId)
+ * Это позволяет повторно опубликовать видео
+ */
+router.post("/videos/:id/unlink-youtube", async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const video = await prisma.video.findUnique({ where: { id } });
+
+    if (!video) {
+      return res.status(404).json({ error: "Video not found" });
+    }
+
+    if (!video.youtubeId) {
+      return res.status(400).json({ error: "Video is not linked to YouTube" });
+    }
+
+    const updatedVideo = await prisma.video.update({
+      where: { id },
+      data: {
+        youtubeId: null,
+        youtubeUrl: null,
+        youtubeChannelId: null,
+      },
+    });
+
+    console.log(
+      `[YouTube] Unlinked video ${id} from YouTube (was: ${video.youtubeId})`,
+    );
+
+    res.json({
+      success: true,
+      video: {
+        ...updatedVideo,
+        progress: updatedVideo.progress
+          ? JSON.parse(updatedVideo.progress)
+          : null,
+        youtubeChannel: null,
+      },
+    });
+  } catch (error) {
+    console.error("Error unlinking YouTube:", error);
+    res.status(500).json({
+      error: "Failed to unlink YouTube",
+      message: error.message,
+    });
+  }
+});
+
+/**
  * POST /retry/:id
  * Повторная генерация видео с указанного шага
  * Body: { fromStep: 1-5, videoSource: 'pexels'|'pixabay'|'klipy' } - с какого шага начать

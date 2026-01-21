@@ -1,8 +1,11 @@
-const OpenAI = require("openai");
+const { getProvider, DEFAULT_PROVIDER } = require("./ai-providers");
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Для vision используем OpenAI напрямую (gpt-4o поддерживает vision)
+// TODO: Добавить поддержку Gemini Vision в будущем
+const OpenAI = require("openai");
+const openaiClient = process.env.OPENAI_API_KEY
+  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  : null;
 
 /**
  * Использует GPT-4o Vision для выбора наиболее подходящих видео (одного или нескольких)
@@ -74,7 +77,7 @@ async function selectBestVideos(
       .map((v, i) => `Видео ${i + 1}: ${v.duration || "неизвестно"} сек`)
       .join(", ");
 
-    const response = await openai.chat.completions.create({
+    const response = await openaiClient.chat.completions.create({
       model: "gpt-4o",
       messages: [
         {

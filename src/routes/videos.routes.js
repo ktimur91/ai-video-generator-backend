@@ -91,6 +91,8 @@ router.post("/generate", async (req, res) => {
     useAIMusicSelection = false,
     useLoopScript = false,
     templateId = null,
+    aiProvider = null,
+    aiModel = null,
   } = req.body;
 
   if (!topic) {
@@ -175,7 +177,11 @@ router.post("/generate", async (req, res) => {
       });
     }
 
-    const aiResult = await generateScript(topic, { useLoopScript });
+    const aiResult = await generateScript(topic, {
+      useLoopScript,
+      provider: aiProvider,
+      model: aiModel,
+    });
     const tags = aiResult.tags || ["shorts", "факты", "интересное"];
     const hashtags = aiResult.hashtags || ["#interesting", "#интересное"];
 
@@ -374,6 +380,7 @@ router.post("/generate", async (req, res) => {
             topic,
             aiResult.title,
             musicTracks,
+            { provider: aiProvider, model: aiModel },
           );
         } else {
           // Берём первый (наиболее популярный) трек
@@ -1668,6 +1675,19 @@ router.post("/retry/:id", async (req, res) => {
         video = await updateVideoProgress(video.id, {}, progress);
       }
 
+      // Получаем настройки голоса
+      let voiceConfig = null;
+      if (video.voiceConfigId) {
+        voiceConfig = await prisma.voiceConfig.findUnique({
+          where: { id: video.voiceConfigId },
+        });
+      }
+      if (!voiceConfig) {
+        voiceConfig = await prisma.voiceConfig.findFirst({
+          where: { isDefault: true },
+        });
+      }
+
       // Генерируем аудио только для сегментов без аудио
       const factSegments = segments.filter(
         (s) => s.type !== "intro" && s.type !== "outro",
@@ -1675,6 +1695,8 @@ router.post("/retry/:id", async (req, res) => {
       const segmentsWithAudio = await generateSegmentsAudio(
         factSegments.filter((s) => !s.audioPath),
         video.id,
+        null, // onProgress callback
+        voiceConfig, // voice config with ttsProvider
       );
 
       // Обновляем сегменты

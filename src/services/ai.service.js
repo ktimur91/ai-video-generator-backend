@@ -1,8 +1,4 @@
-const OpenAI = require("openai");
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const { chatJSON, DEFAULT_PROVIDER } = require("./ai-providers");
 
 /**
  * Рассчитывает примерную длительность аудио по тексту
@@ -25,12 +21,18 @@ function estimateDuration(text, charsPerSecond = 13) {
  * @param {string} topic - Тема для генерации сценария (например "5 фактов о животных", "в 1990 году какие были события 4 штуки")
  * @param {object} options - Опции генерации
  * @param {boolean} options.useLoopScript - Создать закольцованный сценарий (конец → начало)
+ * @param {string} options.provider - AI провайдер (openai, gemini)
+ * @param {string} options.model - Модель провайдера
  * @returns {Promise<{title: string, script: string, segments: Array}>}
  */
 async function generateScript(topic, options = {}) {
-  const { useLoopScript = false } = options;
+  const { useLoopScript = false, provider, model } = options;
+
+  // Используем переданный провайдер или дефолтный
+  const useProvider = provider || DEFAULT_PROVIDER;
+  const useModel = model || null;
   console.log(
-    `[AI] Generating script for: "${topic}" (loop: ${useLoopScript})`,
+    `[AI] Generating script for: "${topic}" (loop: ${useLoopScript}) with ${useProvider}`,
   );
 
   // Базовый промпт
@@ -197,22 +199,25 @@ keywords - 2-4 ключевых слова для поиска музыки на
   const userPrompt = topic;
 
   try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
+    console.log(
+      `[AI] Using provider: ${useProvider}${useModel ? ` (${useModel})` : ""}`,
+    );
+
+    const { data: result } = await chatJSON(
+      [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-      temperature: 0.8,
-      max_tokens: 3000,
-      response_format: { type: "json_object" },
-    });
-
-    const content = response.choices[0].message.content;
-    const result = JSON.parse(content);
+      {
+        provider: useProvider,
+        model: useModel,
+        temperature: 0.8,
+        maxTokens: 3000,
+      },
+    );
 
     if (!result.title || !result.segments) {
-      throw new Error("Invalid response format from OpenAI");
+      throw new Error("Invalid response format from AI");
     }
 
     console.log(`[AI] Generated ${result.segments.length} segments`);
@@ -248,11 +253,18 @@ keywords - 2-4 ключевых слова для поиска музыки на
 /**
  * Генерирует список тем для YouTube Shorts
  * @param {string} category - Категория или тема для генерации идей (опционально)
+ * @param {object} options - Опции
+ * @param {string} options.provider - AI провайдер
+ * @param {string} options.model - Модель
  * @returns {Promise<{topics: string[]}>}
  */
-async function generateTopicSuggestions(category = null) {
+async function generateTopicSuggestions(category = null, options = {}) {
+  const { provider, model } = options;
+  const useProvider = provider || DEFAULT_PROVIDER;
+  const useModel = model || null;
+
   console.log(
-    `[AI] Generating topic suggestions for: "${category || "general"}"`,
+    `[AI] Generating topic suggestions for: "${category || "general"}" using ${useProvider}`,
   );
 
   const systemPrompt = `Ты - креативный маркетолог YouTube Shorts. Твоя задача - предлагать ВИРУСНЫЕ и ИНТЕРЕСНЫЕ темы для коротких видео.
@@ -281,19 +293,18 @@ async function generateTopicSuggestions(category = null) {
     : `Дай мне список разнообразных тем для YouTube Shorts. Предложи 8-12 интересных и вирусных идей из разных сфер: наука, психология, факты, лайфхаки, интересное.`;
 
   try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
+    const { data: result } = await chatJSON(
+      [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-      temperature: 0.9,
-      max_tokens: 1000,
-      response_format: { type: "json_object" },
-    });
-
-    const content = response.choices[0].message.content;
-    const result = JSON.parse(content);
+      {
+        provider: useProvider,
+        model: useModel,
+        temperature: 0.9,
+        maxTokens: 1000,
+      },
+    );
 
     console.log(
       `[AI] Generated ${result.topics?.length || 0} topic suggestions`,

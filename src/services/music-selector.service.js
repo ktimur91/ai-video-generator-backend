@@ -1,22 +1,28 @@
 /**
- * Сервис для ИИ-выбора музыки с использованием GPT-4o-mini
+ * Сервис для ИИ-выбора музыки
  * Анализирует метаданные треков и выбирает наиболее подходящий для темы видео
  */
 
-const OpenAI = require("openai");
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const { chat, DEFAULT_PROVIDER } = require("./ai-providers");
 
 /**
  * Выбирает лучший трек для видео с помощью ИИ
  * @param {string} videoTopic - Тема видео
  * @param {string} videoTitle - Заголовок видео
  * @param {Array} trackOptions - Массив треков с метаданными
+ * @param {object} options - Дополнительные опции
+ * @param {string} options.provider - AI провайдер (openai, gemini)
+ * @param {string} options.model - AI модель
  * @returns {Promise<object|null>} - Выбранный трек или null
  */
-async function selectBestTrack(videoTopic, videoTitle, trackOptions) {
+async function selectBestTrack(
+  videoTopic,
+  videoTitle,
+  trackOptions,
+  options = {},
+) {
+  const provider = options.provider || DEFAULT_PROVIDER;
+  const model = options.model || null;
   if (!trackOptions || trackOptions.length === 0) {
     console.log("[MusicSelector] No tracks to select from");
     return null;
@@ -79,22 +85,24 @@ ${tracksDescription}
 ПРИЧИНА: [краткое объяснение в 1-2 предложения]`;
 
     console.log(
-      `[MusicSelector] Analyzing ${trackOptions.length} tracks for: "${videoTitle}"`
+      `[MusicSelector] Analyzing ${trackOptions.length} tracks with ${provider} for: "${videoTitle}"`,
     );
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
+    const { content: answer } = await chat(
+      [
         {
           role: "user",
           content: prompt,
         },
       ],
-      max_tokens: 200,
-      temperature: 0.3, // Низкая температура для более предсказуемого выбора
-    });
+      {
+        provider: provider,
+        model: model,
+        maxTokens: 200,
+        temperature: 0.3, // Низкая температура для более предсказуемого выбора
+      },
+    );
 
-    const answer = response.choices[0]?.message?.content || "";
     console.log(`[MusicSelector] AI response: ${answer}`);
 
     // Парсим ответ
@@ -109,7 +117,7 @@ ${tracksDescription}
         const reason = reasonMatch ? reasonMatch[1].trim() : "AI selection";
 
         console.log(
-          `[MusicSelector] Selected: "${selectedTrack.name}" by ${selectedTrack.artist}`
+          `[MusicSelector] Selected: "${selectedTrack.name}" by ${selectedTrack.artist}`,
         );
         console.log(`[MusicSelector] Reason: ${reason}`);
 
@@ -119,7 +127,7 @@ ${tracksDescription}
 
     // Если не удалось распарсить, возвращаем первый трек
     console.log(
-      "[MusicSelector] Could not parse AI response, using first track"
+      "[MusicSelector] Could not parse AI response, using first track",
     );
     return trackOptions[0];
   } catch (error) {

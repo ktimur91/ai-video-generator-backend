@@ -2,10 +2,11 @@ const { exec } = require("child_process");
 const path = require("path");
 const fs = require("fs").promises;
 const { transcribeWithTimings } = require("./whisper.service");
+const { generateTTS } = require("./tts.service");
 
 const AUDIO_DIR = path.join(__dirname, "../../storage/audio");
 
-// Путь к edge-tts CLI (Python)
+// Путь к edge-tts CLI (Python) - используется для legacy
 // Приоритет: переменная окружения > просто команда (если в PATH)
 const EDGE_TTS_PATH = process.env.EDGE_TTS_PATH || "edge-tts";
 
@@ -184,6 +185,7 @@ function applyPronunciationFixes(text) {
  */
 async function generateAudio(text, videoId, voiceConfig = null) {
   // Используем настройки из конфига или дефолтные значения
+  const ttsProvider = voiceConfig?.ttsProvider || "edge";
   const voice =
     voiceConfig?.voice || process.env.TTS_VOICE || "ru-RU-DmitryNeural";
   const rate = voiceConfig?.rate || "+25%";
@@ -191,7 +193,7 @@ async function generateAudio(text, videoId, voiceConfig = null) {
   const volume = voiceConfig?.volume || "+0%";
 
   console.log(
-    `[TTS] Using voice: ${voice}, rate: ${rate}, pitch: ${pitch}, volume: ${volume}`,
+    `[TTS] Provider: ${ttsProvider}, voice: ${voice}, rate: ${rate}, pitch: ${pitch}, volume: ${volume}`,
   );
 
   const filename = `${videoId}.mp3`;
@@ -207,67 +209,34 @@ async function generateAudio(text, videoId, voiceConfig = null) {
     .replace(/\n+/g, " ") // Заменяем переносы на пробелы
     .trim();
 
-  // Применяем замены для правильного произношения английских слов
-  cleanText = applyPronunciationFixes(cleanText);
-  console.log("[TTS] Text after pronunciation fixes:", cleanText);
+  // Применяем замены для правильного произношения английских слов (только для Edge TTS с русскими голосами)
+  if (ttsProvider === "edge" && voice.startsWith("ru-")) {
+    cleanText = applyPronunciationFixes(cleanText);
+    console.log("[TTS] Text after pronunciation fixes:", cleanText);
+  }
 
-  // Создаём временный файл с текстом (для длинных текстов)
-  const textFilePath = path.join(AUDIO_DIR, `${videoId}.txt`);
-  await fs.writeFile(textFilePath, cleanText, "utf-8");
+  try {
+    // Используем универсальный TTS сервис
+    await generateTTS(cleanText, outputPath, {
+      provider: ttsProvider,
+      voice,
+      rate,
+      pitch,
+      volume,
+    });
 
-  return new Promise((resolve, reject) => {
-    // Формируем команду с параметрами из конфига
-    const rateParam = rate ? `--rate="${rate}"` : "";
-    const pitchParam = pitch ? `--pitch="${pitch}"` : "";
-    const volumeParam =
-      volume && volume !== "+0%" ? `--volume="${volume}"` : "";
+    // Получаем длительность аудио
+    const duration = await getAudioDuration(outputPath);
+    console.log(`Audio duration: ${duration.toFixed(2)}s`);
 
-    const command = `"${EDGE_TTS_PATH}" --voice "${voice}" ${rateParam} ${pitchParam} ${volumeParam} --file "${textFilePath}" --write-media "${outputPath}"`;
-
-    console.log("Executing TTS command:", command);
-
-    exec(
-      command,
-      { maxBuffer: 1024 * 1024 * 10 },
-      async (error, stdout, stderr) => {
-        // Удаляем временный текстовый файл
-        try {
-          await fs.unlink(textFilePath);
-        } catch (e) {
-          // Игнорируем ошибку удаления
-        }
-
-        if (error) {
-          console.error("TTS error:", error);
-          console.error("Stderr:", stderr);
-          reject(new Error(`Failed to generate audio: ${error.message}`));
-          return;
-        }
-
-        if (stdout) {
-          console.log("TTS stdout:", stdout);
-        }
-
-        console.log(`Audio generated successfully: ${outputPath}`);
-
-        // Получаем длительность аудио
-        try {
-          const duration = await getAudioDuration(outputPath);
-          console.log(`Audio duration: ${duration.toFixed(2)}s`);
-          resolve({
-            path: `storage/audio/${filename}`,
-            duration: duration,
-          });
-        } catch (durError) {
-          // Если не удалось получить длительность, возвращаем 3 секунды по умолчанию
-          resolve({
-            path: `storage/audio/${filename}`,
-            duration: 3,
-          });
-        }
-      },
-    );
-  });
+    return {
+      path: `storage/audio/${filename}`,
+      duration: duration,
+    };
+  } catch (error) {
+    console.error("TTS error:", error);
+    throw new Error(`Failed to generate audio: ${error.message}`);
+  }
 }
 
 /**
@@ -299,8 +268,19 @@ async function getAudioDuration(audioPath) {
  * @param {number} segmentNumber - Номер сегмента
  * @returns {Promise<{path: string, duration: number}>}
  */
-async function generateSegmentAudio(text, videoId, segmentNumber) {
-  const voice = process.env.TTS_VOICE || "ru-RU-DmitryNeural";
+async function generateSegmentAudio(
+  text,
+  videoId,
+  segmentNumber,
+  voiceConfig = null,
+) {
+  const ttsProvider = voiceConfig?.ttsProvider || "edge";
+  const voice =
+    voiceConfig?.voice || process.env.TTS_VOICE || "ru-RU-DmitryNeural";
+  const rate = voiceConfig?.rate || "+25%";
+  const pitch = voiceConfig?.pitch || "+5Hz";
+  const volume = voiceConfig?.volume || "+0%";
+
   const filename = `${videoId}_segment_${segmentNumber}.mp3`;
   const outputPath = path.join(AUDIO_DIR, filename);
 
@@ -314,63 +294,37 @@ async function generateSegmentAudio(text, videoId, segmentNumber) {
     .replace(/\n+/g, " ")
     .trim();
 
-  // Применяем замены для правильного произношения английских слов
-  cleanText = applyPronunciationFixes(cleanText);
+  // Применяем замены для правильного произношения английских слов (только для Edge TTS с русскими голосами)
+  if (ttsProvider === "edge" && voice.startsWith("ru-")) {
+    cleanText = applyPronunciationFixes(cleanText);
+  }
   console.log(
-    `[TTS] Segment ${segmentNumber} text after fixes:`,
-    cleanText.substring(0, 80) + "...",
+    `[TTS] Segment ${segmentNumber} (${ttsProvider}):`,
+    cleanText.substring(0, 60) + "...",
   );
 
-  // Создаём временный файл с текстом
-  const textFilePath = path.join(
-    AUDIO_DIR,
-    `${videoId}_segment_${segmentNumber}.txt`,
-  );
-  await fs.writeFile(textFilePath, cleanText, "utf-8");
+  try {
+    // Используем универсальный TTS сервис
+    await generateTTS(cleanText, outputPath, {
+      provider: ttsProvider,
+      voice,
+      rate,
+      pitch,
+      volume,
+    });
 
-  return new Promise((resolve, reject) => {
-    // Добавляем --rate для ускорения речи и --pitch для энергичности
-    const command = `"${EDGE_TTS_PATH}" --voice "${voice}" --rate="+25%" --pitch="+5Hz" --file "${textFilePath}" --write-media "${outputPath}"`;
+    // Получаем длительность аудио
+    const duration = await getAudioDuration(outputPath);
+    console.log(`Segment ${segmentNumber} audio: ${duration.toFixed(2)}s`);
 
-    console.log(
-      `Generating audio for segment ${segmentNumber}:`,
-      cleanText.substring(0, 50) + "...",
-    );
-
-    exec(
-      command,
-      { maxBuffer: 1024 * 1024 * 10 },
-      async (error, stdout, stderr) => {
-        // Удаляем временный текстовый файл
-        try {
-          await fs.unlink(textFilePath);
-        } catch (e) {}
-
-        if (error) {
-          console.error("TTS error:", error);
-          reject(
-            new Error(`Failed to generate segment audio: ${error.message}`),
-          );
-          return;
-        }
-
-        // Получаем длительность аудио
-        try {
-          const duration = await getAudioDuration(outputPath);
-          console.log(
-            `Segment ${segmentNumber} audio: ${duration.toFixed(2)}s`,
-          );
-
-          resolve({
-            path: `storage/audio/${filename}`,
-            duration: duration,
-          });
-        } catch (durError) {
-          reject(durError);
-        }
-      },
-    );
-  });
+    return {
+      path: `storage/audio/${filename}`,
+      duration: duration,
+    };
+  } catch (error) {
+    console.error("TTS error:", error);
+    throw new Error(`Failed to generate segment audio: ${error.message}`);
+  }
 }
 
 /**
@@ -378,9 +332,15 @@ async function generateSegmentAudio(text, videoId, segmentNumber) {
  * @param {Array} segments - Массив сегментов с text
  * @param {string} videoId - ID видео
  * @param {function} onProgress - Callback для прогресса
+ * @param {object} voiceConfig - Настройки голоса (опционально)
  * @returns {Promise<Array>} - Сегменты с добавленными audioPath, audioDuration и wordTimings
  */
-async function generateSegmentsAudio(segments, videoId, onProgress) {
+async function generateSegmentsAudio(
+  segments,
+  videoId,
+  onProgress,
+  voiceConfig = null,
+) {
   const results = [];
 
   for (let i = 0; i < segments.length; i++) {
@@ -394,6 +354,7 @@ async function generateSegmentsAudio(segments, videoId, onProgress) {
       segment.text,
       videoId,
       segment.number,
+      voiceConfig,
     );
 
     // Транскрибируем аудио для получения таймингов слов

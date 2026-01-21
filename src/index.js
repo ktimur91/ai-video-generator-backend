@@ -9,6 +9,7 @@ const musicRoutes = require("./routes/music.routes");
 const youtubeRoutes = require("./routes/youtube.routes");
 const templatesRoutes = require("./routes/templates.routes");
 const aiAssistantRoutes = require("./routes/ai-assistant.routes");
+const aiProvidersRoutes = require("./routes/ai-providers.routes");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -28,6 +29,7 @@ app.use("/api/music", musicRoutes);
 app.use("/api/youtube", youtubeRoutes);
 app.use("/api/templates", templatesRoutes);
 app.use("/api/ai-assistant", aiAssistantRoutes);
+app.use("/api/ai-providers", aiProvidersRoutes);
 
 // Health check
 app.get("/health", (req, res) => {

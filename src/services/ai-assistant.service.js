@@ -1,8 +1,4 @@
-const OpenAI = require("openai");
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const { chat, chatJSON, DEFAULT_PROVIDER } = require("./ai-providers");
 
 /**
  * AI помощник для редактирования видео
@@ -23,6 +19,8 @@ const openai = new OpenAI({
  * @param {boolean} context.useLoopScript - Это loop-видео (закольцованное)
  * @param {string} context.introText - Текст intro (для контекста loop)
  * @param {string} context.outroText - Текст outro (для контекста loop)
+ * @param {string} context.aiProvider - AI провайдер (openai, gemini)
+ * @param {string} context.aiModel - AI модель
  * @returns {Promise<{message: string, actions: Array}>}
  */
 async function processSegmentRequest(
@@ -30,7 +28,13 @@ async function processSegmentRequest(
   chatHistory = [],
   context = {},
 ) {
-  console.log("[AI Assistant] Processing segment request:", userMessage);
+  const provider = context.aiProvider || DEFAULT_PROVIDER;
+  const model = context.aiModel || null;
+
+  console.log(
+    `[AI Assistant] Processing segment request with ${provider}:`,
+    userMessage,
+  );
 
   // Добавляем информацию о loop-режиме
   const loopInfo = context.useLoopScript
@@ -137,16 +141,12 @@ ${loopInfo}
   ];
 
   try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages,
+    const { data: result } = await chatJSON(messages, {
+      provider: provider,
+      model: model,
       temperature: 0.7,
-      max_tokens: 2000,
-      response_format: { type: "json_object" },
+      maxTokens: 2000,
     });
-
-    const content = response.choices[0].message.content;
-    const result = JSON.parse(content);
 
     console.log("[AI Assistant] Segment response:", result);
 
@@ -170,6 +170,8 @@ ${loopInfo}
  * @param {object} context.music - Текущая музыка
  * @param {object} context.template - Текущий шаблон
  * @param {boolean} context.useLoopScript - Это loop-видео (закольцованное)
+ * @param {string} context.aiProvider - AI провайдер (openai, gemini)
+ * @param {string} context.aiModel - AI модель
  * @returns {Promise<{message: string, actions: Array}>}
  */
 async function processVideoRequest(
@@ -177,7 +179,13 @@ async function processVideoRequest(
   chatHistory = [],
   context = {},
 ) {
-  console.log("[AI Assistant] Processing video request:", userMessage);
+  const provider = context.aiProvider || DEFAULT_PROVIDER;
+  const model = context.aiModel || null;
+
+  console.log(
+    `[AI Assistant] Processing video request with ${provider}:`,
+    userMessage,
+  );
 
   // Форматируем сегменты для контекста
   const segmentsInfo = (context.segments || [])
@@ -323,16 +331,12 @@ ${loopInfo}
   ];
 
   try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages,
+    const { data: result } = await chatJSON(messages, {
+      provider: provider,
+      model: model,
       temperature: 0.7,
-      max_tokens: 4000,
-      response_format: { type: "json_object" },
+      maxTokens: 4000,
     });
-
-    const content = response.choices[0].message.content;
-    const result = JSON.parse(content);
 
     console.log("[AI Assistant] Video response:", result);
 

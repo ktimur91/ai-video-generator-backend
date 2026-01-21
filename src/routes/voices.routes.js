@@ -4,6 +4,7 @@ const { PrismaClient } = require("@prisma/client");
 const { exec } = require("child_process");
 const path = require("path");
 const fs = require("fs").promises;
+const { generateTTS, isProviderAvailable } = require("../services/tts.service");
 
 const prisma = new PrismaClient();
 
@@ -11,8 +12,18 @@ const prisma = new PrismaClient();
 const EDGE_TTS_PATH = process.env.EDGE_TTS_PATH || "edge-tts";
 const PREVIEW_DIR = path.join(__dirname, "../../storage/voice-previews");
 
-// Доступные голоса Edge TTS (русские и популярные английские)
-const AVAILABLE_VOICES = [
+// ============ TTS ПРОВАЙДЕРЫ ============
+
+const TTS_PROVIDERS = [
+  { id: "edge", name: "Edge TTS", desc: "Бесплатный, Microsoft" },
+  { id: "openai", name: "OpenAI TTS", desc: "Платный, высокое качество" },
+  { id: "gemini", name: "Gemini TTS", desc: "Google, экспериментальный" },
+];
+
+// ============ ГОЛОСА ПО ПРОВАЙДЕРАМ ============
+
+// Edge TTS голоса
+const EDGE_VOICES = [
   // Русские голоса
   { id: "ru-RU-DmitryNeural", name: "Дмитрий", lang: "ru-RU", gender: "male" },
   {
@@ -55,6 +66,94 @@ const AVAILABLE_VOICES = [
   { id: "uk-UA-PolinaNeural", name: "Полина", lang: "uk-UA", gender: "female" },
 ];
 
+// OpenAI TTS голоса (tts-1, tts-1-hd)
+const OPENAI_VOICES = [
+  {
+    id: "alloy",
+    name: "Alloy",
+    lang: "multi",
+    gender: "neutral",
+    desc: "Нейтральный",
+  },
+  {
+    id: "echo",
+    name: "Echo",
+    lang: "multi",
+    gender: "male",
+    desc: "Мужской, мягкий",
+  },
+  {
+    id: "fable",
+    name: "Fable",
+    lang: "multi",
+    gender: "male",
+    desc: "Британский акцент",
+  },
+  {
+    id: "onyx",
+    name: "Onyx",
+    lang: "multi",
+    gender: "male",
+    desc: "Глубокий, авторитетный",
+  },
+  {
+    id: "nova",
+    name: "Nova",
+    lang: "multi",
+    gender: "female",
+    desc: "Женский, дружелюбный",
+  },
+  {
+    id: "shimmer",
+    name: "Shimmer",
+    lang: "multi",
+    gender: "female",
+    desc: "Женский, тёплый",
+  },
+];
+
+// Gemini TTS голоса
+const GEMINI_VOICES = [
+  {
+    id: "Puck",
+    name: "Puck",
+    lang: "multi",
+    gender: "male",
+    desc: "Мужской голос",
+  },
+  {
+    id: "Charon",
+    name: "Charon",
+    lang: "multi",
+    gender: "male",
+    desc: "Мужской, глубокий",
+  },
+  {
+    id: "Kore",
+    name: "Kore",
+    lang: "multi",
+    gender: "female",
+    desc: "Женский голос",
+  },
+  {
+    id: "Fenrir",
+    name: "Fenrir",
+    lang: "multi",
+    gender: "male",
+    desc: "Мужской, энергичный",
+  },
+  {
+    id: "Aoede",
+    name: "Aoede",
+    lang: "multi",
+    gender: "female",
+    desc: "Женский, мелодичный",
+  },
+];
+
+// Объединённый список для обратной совместимости
+const AVAILABLE_VOICES = EDGE_VOICES;
+
 /**
  * GET /voices
  * Получить список всех конфигураций голосов
@@ -68,7 +167,12 @@ router.get("/", async (req, res) => {
     res.json({
       success: true,
       voices,
-      availableVoices: AVAILABLE_VOICES,
+      ttsProviders: TTS_PROVIDERS,
+      availableVoices: {
+        edge: EDGE_VOICES,
+        openai: OPENAI_VOICES,
+        gemini: GEMINI_VOICES,
+      },
     });
   } catch (error) {
     console.error("Error fetching voices:", error);
@@ -112,7 +216,7 @@ router.get("/default", async (req, res) => {
  * Создать новую конфигурацию голоса
  */
 router.post("/", async (req, res) => {
-  const { name, voice, rate, pitch, volume, isDefault } = req.body;
+  const { name, ttsProvider, voice, rate, pitch, volume, isDefault } = req.body;
 
   if (!name || !voice) {
     return res.status(400).json({ error: "Name and voice are required" });
@@ -130,6 +234,7 @@ router.post("/", async (req, res) => {
     const voiceConfig = await prisma.voiceConfig.create({
       data: {
         name,
+        ttsProvider: ttsProvider || "edge",
         voice,
         rate: rate || "+0%",
         pitch: pitch || "+0Hz",
@@ -154,7 +259,7 @@ router.post("/", async (req, res) => {
  */
 router.put("/:id", async (req, res) => {
   const { id } = req.params;
-  const { name, voice, rate, pitch, volume, isDefault } = req.body;
+  const { name, ttsProvider, voice, rate, pitch, volume, isDefault } = req.body;
 
   try {
     // Если этот голос будет основным, убираем флаг у остальных
@@ -169,6 +274,7 @@ router.put("/:id", async (req, res) => {
       where: { id },
       data: {
         ...(name && { name }),
+        ...(ttsProvider && { ttsProvider }),
         ...(voice && { voice }),
         ...(rate && { rate }),
         ...(pitch && { pitch }),
@@ -244,10 +350,20 @@ router.post("/:id/set-default", async (req, res) => {
  * Генерирует превью аудио с заданными настройками
  */
 router.post("/preview", async (req, res) => {
-  const { text, voice, rate, pitch, volume } = req.body;
+  const { text, ttsProvider, voice, rate, pitch, volume, speed, model } =
+    req.body;
 
   if (!text || !voice) {
     return res.status(400).json({ error: "Text and voice are required" });
+  }
+
+  const provider = ttsProvider || "edge";
+
+  // Проверяем доступность провайдера
+  if (!isProviderAvailable(provider)) {
+    return res.status(400).json({
+      error: `TTS provider "${provider}" is not available. Check API key configuration.`,
+    });
   }
 
   try {
@@ -258,32 +374,17 @@ router.post("/preview", async (req, res) => {
     const filename = `preview_${Date.now()}.mp3`;
     const outputPath = path.join(PREVIEW_DIR, filename);
 
-    // Формируем команду edge-tts
-    const rateParam = rate ? `--rate="${rate}"` : "";
-    const pitchParam = pitch ? `--pitch="${pitch}"` : "";
-    const volumeParam = volume ? `--volume="${volume}"` : "";
+    console.log(`[Voice Preview] Provider: ${provider}, Voice: ${voice}`);
 
-    const command = `"${EDGE_TTS_PATH}" --voice "${voice}" ${rateParam} ${pitchParam} ${volumeParam} --text "${text.replace(
-      /"/g,
-      '\\"',
-    )}" --write-media "${outputPath}"`;
-
-    console.log("[Voice Preview] Command:", command);
-
-    await new Promise((resolve, reject) => {
-      exec(
-        command,
-        { maxBuffer: 1024 * 1024 * 10 },
-        (error, stdout, stderr) => {
-          if (error) {
-            console.error("[Voice Preview] Error:", error);
-            console.error("[Voice Preview] Stderr:", stderr);
-            reject(error);
-            return;
-          }
-          resolve();
-        },
-      );
+    // Используем универсальный TTS сервис
+    await generateTTS(text, outputPath, {
+      provider,
+      voice,
+      rate,
+      pitch,
+      volume,
+      speed: speed || 1.0,
+      model: model || "tts-1",
     });
 
     // Возвращаем URL превью
@@ -296,7 +397,9 @@ router.post("/preview", async (req, res) => {
     cleanupOldPreviews();
   } catch (error) {
     console.error("Error generating preview:", error);
-    res.status(500).json({ error: "Failed to generate preview" });
+    res
+      .status(500)
+      .json({ error: `Failed to generate preview: ${error.message}` });
   }
 });
 

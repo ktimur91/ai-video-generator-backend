@@ -8,6 +8,7 @@ const voicesRoutes = require("./routes/voices.routes");
 const musicRoutes = require("./routes/music.routes");
 const youtubeRoutes = require("./routes/youtube.routes");
 const templatesRoutes = require("./routes/templates.routes");
+const aiAssistantRoutes = require("./routes/ai-assistant.routes");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -26,6 +27,7 @@ app.use("/api/voices", voicesRoutes);
 app.use("/api/music", musicRoutes);
 app.use("/api/youtube", youtubeRoutes);
 app.use("/api/templates", templatesRoutes);
+app.use("/api/ai-assistant", aiAssistantRoutes);
 
 // Health check
 app.get("/health", (req, res) => {

@@ -258,6 +258,23 @@ router.post("/generate", async (req, res) => {
     // ========== ШАГ 2: Подбор видео фонов + музыки ==========
     console.log(`Step 2: Searching stock videos on ${videoSource}...`);
 
+    // Загружаем настройки шаблона для получения maxClipDuration
+    let maxClipDuration = 3; // Дефолт 3 секунды
+    if (templateId) {
+      try {
+        const template = await prisma.videoTemplate.findUnique({
+          where: { id: templateId },
+          select: { maxClipDuration: true },
+        });
+        if (template?.maxClipDuration) {
+          maxClipDuration = template.maxClipDuration;
+          console.log(`[Template] Using maxClipDuration: ${maxClipDuration}s`);
+        }
+      } catch (e) {
+        console.error("[Template] Failed to load template settings:", e);
+      }
+    }
+
     // Отслеживаем уже использованные видео чтобы избежать повторов
     const usedVideoIds = [];
 
@@ -281,12 +298,13 @@ router.post("/generate", async (req, res) => {
           });
 
           if (videoOptions.length > 0) {
-            // AI выбирает видео по превью (может выбрать несколько), исключая уже использованные
+            // AI выбирает видео по превью, учитывая maxClipDuration из шаблона
             const selectedVideos = await selectBestVideos(
               segment.text,
               videoOptions,
               usedVideoIds,
               segment.estimatedDuration,
+              maxClipDuration,
             );
 
             // Записываем выбранные видео с процентами
@@ -501,6 +519,7 @@ router.post("/approve/:id", async (req, res) => {
     segments: updatedSegments,
     backgroundMusicData,
     voiceConfigId,
+    useLoopScript,
   } = req.body;
 
   try {
@@ -534,6 +553,11 @@ router.post("/approve/:id", async (req, res) => {
     // templateId
     if (req.body.templateId !== undefined) {
       updateData.templateId = req.body.templateId || null;
+    }
+
+    // useLoopScript
+    if (useLoopScript !== undefined) {
+      updateData.useLoopScript = !!useLoopScript;
     }
 
     if (backgroundMusicData !== undefined) {
@@ -2065,8 +2089,13 @@ router.get("/search-videos", async (req, res) => {
  */
 router.patch("/videos/:id/segments", async (req, res) => {
   const { id } = req.params;
-  const { segments, voiceConfigId, backgroundMusicData, regenerateAudio } =
-    req.body;
+  const {
+    segments,
+    voiceConfigId,
+    backgroundMusicData,
+    regenerateAudio,
+    useLoopScript,
+  } = req.body;
 
   if (!segments || !Array.isArray(segments)) {
     return res.status(400).json({ error: "Segments array is required" });
@@ -2085,6 +2114,11 @@ router.patch("/videos/:id/segments", async (req, res) => {
     const updateData = {
       segments: JSON.stringify(segments),
     };
+
+    // Обновляем useLoopScript если передано
+    if (useLoopScript !== undefined) {
+      updateData.useLoopScript = !!useLoopScript;
+    }
 
     // Обрабатываем backgroundMusicData
     if (backgroundMusicData !== undefined) {
@@ -2162,6 +2196,7 @@ router.post("/videos/:id/regenerate", async (req, res) => {
     voiceConfigId,
     backgroundMusicData,
     templateId,
+    useLoopScript,
   } = req.body;
 
   try {
@@ -2212,6 +2247,11 @@ router.post("/videos/:id/regenerate", async (req, res) => {
     // Добавляем templateId если передан
     if (templateId !== undefined) {
       updateData.templateId = templateId || null;
+    }
+
+    // Добавляем useLoopScript если передан
+    if (useLoopScript !== undefined) {
+      updateData.useLoopScript = !!useLoopScript;
     }
 
     // Обрабатываем backgroundMusicData
